@@ -1,0 +1,28 @@
+# 环境变量与密钥（绝不入库）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 向量库本地数据
+qdrant_data/
+
+# 运行时日志
+logs/
+*.log
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
