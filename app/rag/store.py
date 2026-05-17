@@ -8,9 +8,10 @@
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -125,10 +126,19 @@ def index_to_store(
     category: str,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    rebuild: bool = False,
 ) -> int:
     """加载 + 切块 + 写入 store。返回写入的 chunk 数量。"""
     raw = load_directory(path, category=category)
     chunks = chunk_documents(raw, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    if rebuild:
+        if store.client.collection_exists(store.collection_name):
+            store.client.delete_collection(store.collection_name)
+        embeddings = store.embeddings
+        if embeddings is None:
+            raise ValueError("QdrantVectorStore requires dense embeddings for rebuild")
+        vector_size = len(embeddings.embed_query("__vector_size_probe__"))
+        _ensure_collection(store.client, store.collection_name, vector_size)
     if not chunks:
         return 0
     store.add_documents(chunks)
@@ -140,7 +150,7 @@ def index_track(track: Track) -> int:
     s = get_settings()
     path = s.industry_kb_path if track == "industry" else s.enterprise_kb_path
     store = get_store(track, embeddings=get_embeddings())
-    return index_to_store(store, path, category=track)
+    return index_to_store(store, path, category=track, rebuild=True)
 
 
 class DualTrackRetriever:

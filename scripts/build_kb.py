@@ -7,16 +7,17 @@
     python -m scripts.build_kb --check      # dry-run 只清点文档
 
 首次运行会触发 BGE 模型下载（约 1.2GB 到 ~/.cache/huggingface/）。
-重复运行会写入新 chunk（Qdrant 默认行为）；如需完全重建，先 rm -rf qdrant_data/。
+重复运行会先重建对应 collection，再写入当前源文件生成的 chunk。
 """
 from __future__ import annotations
 
 import argparse
 import sys
 import time
+from typing import cast
 
 from app.config import get_settings
-from app.rag.store import index_track, load_directory
+from app.rag.store import Track, index_track, load_directory
 
 
 def _check() -> int:
@@ -35,7 +36,7 @@ def _build(track_arg: str) -> int:
     for track in tracks:
         print(f"[build] 开始索引 {track}（首次会下载 BGE 模型）...", flush=True)
         t0 = time.time()
-        n = index_track(track)
+        n = index_track(cast(Track, track))
         elapsed = time.time() - t0
         print(f"[build] {track} 完成: {n} chunks, 耗时 {elapsed:.1f}s")
         total += n

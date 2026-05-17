@@ -76,7 +76,7 @@ class TestAuthorizationMatrix:
 class TestThresholds:
     def test_large_transfer_matches_design(self):
         # DESIGN.md §4.2.3 route_by_intent 直接引用此常量
-        assert Thresholds.LARGE_TRANSFER == Decimal("5000000")
+        assert Decimal("5000000") == Thresholds.LARGE_TRANSFER
 
     def test_all_thresholds_are_decimal(self):
         for name in ["LARGE_TRANSFER", "AML_REPORT_CORP", "AML_REPORT_PERSONAL", "CROSS_BORDER_DAILY"]:

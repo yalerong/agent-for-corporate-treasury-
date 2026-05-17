@@ -9,9 +9,10 @@ from __future__ import annotations
 import functools
 import json
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from app.config import get_settings
 
@@ -65,7 +66,7 @@ def audit(tool_name: str | None = None) -> Callable[[F], F]:
                     preview = s[:500] + ("…" if len(s) > 500 else "")
                 _emit(
                     {
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                         "tool": name,
                         "args": [_safe_json(a) for a in args],
                         "kwargs": {k: _safe_json(v) for k, v in kwargs.items()},

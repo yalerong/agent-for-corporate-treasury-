@@ -6,17 +6,17 @@
 
 ## 当前状态
 
-> 本目录当前是 **架构与产品设计文档包**，不是可运行代码项目。
+> 本仓库当前已进入 **Phase 2 早期可运行骨架**：包含 FastAPI 接口、LangGraph 路由、HITL 审批流、双轨 RAG 索引/检索、CLI、Gradio 本地界面和 pytest 测试。
 
-截至 2026-05-16，仓库内仅包含 `README.md`、`DESIGN.md`、`CLAUDE.md`、`HISTORY.md` 四个文档文件。后文出现的 `app/`、`main.py`、`requirements.txt`、`knowledge_base/`、`scripts/`、`tests/` 等路径均为 **目标项目结构**，尚未落地为代码。
+截至 2026-05-16，代码已落地到 `app/`、`main.py`、`requirements.txt`、`knowledge_base/`、`scripts/`、`tests/` 等路径。当前实现仍以演示和骨架为主，真实银企直连、ERP、外汇行情、AML 名单筛查等生产系统对接仍属于后续阶段。
 
 当前阶段定义为：
 
-- **Phase 0：方向澄清与文档基线**
-- 目标：统一业务边界、架构方向、安全红线、目录规划和后续开发顺序
-- 非目标：不要求现在能安装依赖、启动服务、运行测试或连接真实业务系统
+- **Phase 2：本地可运行骨架与 RAG/HITL 验证**
+- 目标：验证角色路由、权限边界、知识库检索、人工审批恢复和 API/CLI 基础交互
+- 非目标：不直接连接真实付款、交易、ERP 或监管报送系统
 
-后续进入代码开发前，必须先以本文档和 `DESIGN.md` 为准，创建最小可运行骨架，再推进 RAG、Agent、Tool、审批流等功能。
+后续生产化前，必须补齐身份认证、租户/用户级授权、持久化 checkpointer、真实业务 Tool、安全审计存储和部署配置。
 
 ---
 
@@ -141,7 +141,7 @@
 
 ## 快速开始
 
-> 下面内容是 **代码落地后的目标启动方式**。当前目录尚无 `requirements.txt`、`main.py`、`app/` 等文件，不能直接执行。
+下面命令基于当前仓库代码。
 
 ### 环境准备
 
@@ -170,64 +170,56 @@ pip install -r requirements.txt
 复制 `.env.example` 为 `.env`，并填写以下关键配置：
 
 ```env
-# LLM 配置
-OPENAI_API_KEY=sk-xxxxxxxx
-OPENAI_BASE_URL=https://api.openai.com/v1
-# 或国产模型
-DASHSCOPE_API_KEY=sk-xxxxxxxx
+LLM_PROVIDER=qwen
+LLM_MODEL=qwen-max
+LLM_API_KEY=sk-xxxxxxxx
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
-# 向量数据库
-VECTOR_DB_URL=http://localhost:19530
-
-# 数据库
-DATABASE_URL=postgresql://user:pass@localhost:5432/treasury
-
-# 银企直连（测试环境）
-BANK_API_BASE_URL=https://sandbox-api.bank.com
-BANK_API_KEY=xxxxxxxx
-
-# 合规配置
-AML_SCREENING_ENABLED=true
-MAX_AUTO_APPROVAL_AMOUNT=5000000  # 自动审批金额上限（元）
-HITL_ENABLED=true  # 是否开启人工审批节点
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+QDRANT_PATH=./qdrant_data
+AUDIT_LOG_PATH=./logs/audit.jsonl
+API_AUTH_TOKEN=change-me
 ```
 
 ### 初始化知识库
 
 ```bash
 # 加载法规、制度文档到向量数据库
-python scripts/init_knowledge_base.py \
-  --docs-dir ./knowledge_base/ \
-  --category regulation,policy,case
+python -m scripts.build_kb
+
+# 只重建企业制度库
+python -m scripts.update_enterprise_kb
 ```
 
 ### 运行项目
 
 ```bash
-# 启动主服务
-python main.py
-
-# 或通过 FastAPI 启动 API 服务
+# FastAPI 服务
 uvicorn app.api:app --host 0.0.0.0 --port 8000 --reload
+
+# CLI 示例
+python main.py --role cashier --task inquiry "查一下今天的余额"
+python main.py --role treasury_supervisor --task transfer --amount 3000000
+
+# 本地 Gradio 页面
+python -m app.web
 ```
 
 ### 快速体验
 
 ```bash
-# 命令行交互模式
-python cli.py
-
-# 输入示例
->> 请查询集团总部资金池的当前可用头寸
->> 帮我制定一份下季度美元应收账款的套期保值方案
->> 请对这笔跨境付款进行反洗钱合规审查
+# 大额调拨会触发 HITL
+curl -X POST http://127.0.0.1:8000/api/v1/chat ^
+  -H "Content-Type: application/json" ^
+  -H "X-API-Key: change-me" ^
+  -d "{\"role\":\"treasury_supervisor\",\"message\":\"调拨 600 万\",\"task\":\"transfer\",\"amount\":\"6000000\"}"
 ```
 
 ---
 
 ## 项目结构
 
-> 这是目标结构，不代表当前磁盘上已经存在这些文件。代码开发阶段应按此结构逐步补齐，并在每次补齐后更新 `HISTORY.md`。
+当前仓库主干结构如下，后续阶段接入真实业务系统时应同步更新 `HISTORY.md`。
 
 ```
 treasury-agent/

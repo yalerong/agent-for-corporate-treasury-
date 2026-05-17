@@ -207,7 +207,7 @@ def _clear_input():
 
 
 def build_demo() -> gr.Blocks:
-    with gr.Blocks(title="资金 Agent (本地)") as demo:
+    with gr.Blocks(title="资金 Agent (本地)", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
             "# 💼 企业资金智能体 (本地)\n"
             "Phase 2 完整版 · DeepSeek v4-flash · MemorySaver checkpointer · HITL 大额审批"
@@ -283,5 +283,4 @@ if __name__ == "__main__":
         share=False,
         inbrowser=True,
         show_error=True,
-        theme=gr.themes.Soft(),
     )

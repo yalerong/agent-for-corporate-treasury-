@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import json
 import uuid
+from decimal import Decimal
+from hmac import compare_digest
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -50,25 +52,38 @@ def _extract_interrupts(out: dict) -> list:
     return list(raw) if isinstance(raw, (list, tuple)) else [raw]
 
 
+def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    expected = get_settings().api_auth_token.get_secret_value()
+    if not expected:
+        raise HTTPException(503, detail="API_AUTH_TOKEN is not configured")
+    if x_api_key is None or not compare_digest(x_api_key, expected):
+        raise HTTPException(401, detail="invalid API key")
+
+
 # ── /chat ──────────────────────────────────────────────────────
 
 
 class ChatRequest(BaseModel):
     role: str = Field(description="操作者角色，对应 UserRole 枚举")
     message: str = Field(description="自然语言请求")
-    task: Optional[str] = Field(None, description="可选：显式指定 Intent，跳过 LLM 意图分类")
-    thread_id: Optional[str] = Field(None, description="可选：恢复指定 thread；不传则新建")
+    task: str | None = Field(None, description="可选：显式指定 Intent，跳过 LLM 意图分类")
+    thread_id: str | None = Field(None, description="可选：恢复指定 thread；不传则新建")
+    amount: Decimal | None = Field(None, description="涉及金额，CNY")
+    approved_instruction_id: str | None = Field(None, description="已审批指令编号")
+    entity_code: str | None = None
+    currency: str | None = None
+    counterparty: str | None = None
 
 
 class ChatResponse(BaseModel):
     thread_id: str
     status: Literal["completed", "interrupted", "rejected"]
-    final_output: Optional[str] = None
-    current_role: Optional[str] = None
-    interrupt_payload: Optional[dict[str, Any]] = None
+    final_output: str | None = None
+    current_role: str | None = None
+    interrupt_payload: dict[str, Any] | None = None
 
 
-@app.post("/api/v1/chat", response_model=ChatResponse)
+@app.post("/api/v1/chat", response_model=ChatResponse, dependencies=[Depends(_require_api_key)])
 def chat(req: ChatRequest) -> ChatResponse:
     if req.role not in {r.value for r in UserRole}:
         raise HTTPException(400, detail=f"invalid role: {req.role}")
@@ -78,6 +93,16 @@ def chat(req: ChatRequest) -> ChatResponse:
     state: dict = {"user_role": req.role, "messages": [HumanMessage(content=req.message)]}
     if req.task:
         state["current_task"] = req.task
+    for field in (
+        "amount",
+        "approved_instruction_id",
+        "entity_code",
+        "currency",
+        "counterparty",
+    ):
+        value = getattr(req, field)
+        if value is not None:
+            state[field] = value
 
     tid = req.thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": tid}}
@@ -113,11 +138,15 @@ def chat(req: ChatRequest) -> ChatResponse:
 
 class ApprovalRequest(BaseModel):
     approved: bool
-    instruction_id: Optional[str] = None
-    reason: Optional[str] = None
+    instruction_id: str | None = None
+    reason: str | None = None
 
 
-@app.post("/api/v1/approvals/{thread_id}", response_model=ChatResponse)
+@app.post(
+    "/api/v1/approvals/{thread_id}",
+    response_model=ChatResponse,
+    dependencies=[Depends(_require_api_key)],
+)
 def approve(thread_id: str, req: ApprovalRequest) -> ChatResponse:
     config = {"configurable": {"thread_id": thread_id}}
     payload: dict[str, Any] = {"approved": req.approved}
@@ -145,7 +174,7 @@ def approve(thread_id: str, req: ApprovalRequest) -> ChatResponse:
 # ── /knowledge ─────────────────────────────────────────────────
 
 
-@app.get("/api/v1/knowledge")
+@app.get("/api/v1/knowledge", dependencies=[Depends(_require_api_key)])
 def knowledge(
     q: str = Query(description="查询文本"),
     target: Literal["industry", "enterprise", "both"] = "both",
@@ -170,10 +199,10 @@ def knowledge(
 # ── /audit/logs ────────────────────────────────────────────────
 
 
-@app.get("/api/v1/audit/logs")
+@app.get("/api/v1/audit/logs", dependencies=[Depends(_require_api_key)])
 def audit_logs(
     limit: int = Query(default=100, ge=1, le=10000),
-    tool: Optional[str] = Query(default=None, description="按 Tool 名筛选"),
+    tool: str | None = Query(default=None, description="按 Tool 名筛选"),
 ) -> list[dict[str, Any]]:
     path = Path(get_settings().audit_log_path)
     if not path.exists():

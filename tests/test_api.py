@@ -9,11 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import app
+from app.config import get_settings
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(monkeypatch):
+    monkeypatch.setenv("API_AUTH_TOKEN", "test-token")
+    get_settings.cache_clear()
+    return TestClient(app, headers={"X-API-Key": "test-token"})
 
 
 class TestHealthz:
@@ -21,6 +24,18 @@ class TestHealthz:
         r = client.get("/healthz")
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
+
+    def test_api_requires_key_when_configured(self, monkeypatch):
+        monkeypatch.setenv("API_AUTH_TOKEN", "test-token")
+        get_settings.cache_clear()
+        raw_client = TestClient(app)
+
+        r = raw_client.post(
+            "/api/v1/chat",
+            json={"role": "cashier", "message": "查余额", "task": "inquiry"},
+        )
+
+        assert r.status_code == 401
 
 
 class TestChat:
@@ -83,6 +98,41 @@ class TestChat:
         assert body["status"] == "interrupted"
         assert body["interrupt_payload"]["kind"] == "approval_request"
         assert body["interrupt_payload"]["task"] == "fx"
+
+    def test_chat_large_transfer_amount_triggers_interrupt(
+        self, client, fake_llm, populated_stores
+    ):
+        fake_llm(["any"])
+        r = client.post(
+            "/api/v1/chat",
+            json={
+                "role": "treasury_supervisor",
+                "message": "调拨 600 万",
+                "task": "transfer",
+                "amount": "6000000",
+            },
+        )
+        body = r.json()
+        assert body["status"] == "interrupted"
+        assert body["interrupt_payload"]["task"] == "transfer"
+        assert body["interrupt_payload"]["amount"] == "6000000"
+
+    def test_chat_cashier_transfer_with_approved_instruction_completes(
+        self, client, fake_llm, populated_stores
+    ):
+        fake_llm(["any"])
+        r = client.post(
+            "/api/v1/chat",
+            json={
+                "role": "cashier",
+                "message": "执行已审批付款",
+                "task": "transfer",
+                "approved_instruction_id": "APR-2026-API-001",
+            },
+        )
+        body = r.json()
+        assert body["status"] == "completed"
+        assert body["current_role"] == "cashier"
 
 
 class TestApprovals:

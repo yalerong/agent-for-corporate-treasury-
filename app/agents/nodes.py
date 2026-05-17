@@ -29,7 +29,7 @@ def _last_human_message(state: TreasuryState) -> str | None:
     msgs = state.get("messages") or []
     for m in reversed(msgs):
         if isinstance(m, HumanMessage):
-            return m.content
+            return m.content if isinstance(m.content, str) else str(m.content)
     return None
 
 
@@ -77,6 +77,7 @@ def _classify_intent(query: str) -> str:
     llm = llm_module.get_chat_model()
     response = llm.invoke(prompt)
     raw = response.content if hasattr(response, "content") else str(response)
+    raw = raw if isinstance(raw, str) else str(raw)
     first_token = raw.strip().lower().split()[0] if raw.strip() else "knowledge"
     # 去掉可能的标点
     first_token = first_token.strip(".,\"'!?。，！？")

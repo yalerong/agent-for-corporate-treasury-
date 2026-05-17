@@ -144,3 +144,28 @@ class TestDualTrackRetrieval:
         results = retriever.search("调拨", track="enterprise")
         assert "enterprise" in results
         assert "industry" not in results
+
+
+class TestIndexToStore:
+    def test_rebuild_replaces_existing_collection(
+        self, tmp_dir, fake_embeddings, in_memory_client
+    ):
+        kb = tmp_dir / "enterprise"
+        kb.mkdir()
+        (kb / "policy.md").write_text("旧制度内容", encoding="utf-8")
+        store = get_store(
+            "enterprise",
+            embeddings=fake_embeddings,
+            client=in_memory_client,
+            collection_name="rebuild_enterprise",
+        )
+
+        assert index_to_store(store, kb, "enterprise", rebuild=True) == 1
+
+        (kb / "policy.md").write_text("新制度内容", encoding="utf-8")
+        assert index_to_store(store, kb, "enterprise", rebuild=True) == 1
+
+        old_results = store.similarity_search("旧制度", k=5)
+        new_results = store.similarity_search("新制度", k=5)
+        assert all("旧制度内容" not in d.page_content for d in old_results)
+        assert any("新制度内容" in d.page_content for d in new_results)

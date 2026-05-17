@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -15,14 +15,14 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     CASHIER = "cashier"
     TREASURY_SUPERVISOR = "treasury_supervisor"
     TREASURY_MANAGER = "treasury_manager"
     ADMIN = "admin"
 
 
-class Intent(str, Enum):
+class Intent(StrEnum):
     INQUIRY = "inquiry"
     RECONCILIATION = "reconciliation"
     TRANSFER = "transfer"
@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     payment_mock_mode: bool = True
 
     audit_log_path: Path = Path("./logs/audit.jsonl")
+    api_auth_token: SecretStr = SecretStr("")
 
 
 @lru_cache(maxsize=1)

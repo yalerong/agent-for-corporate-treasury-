@@ -113,6 +113,7 @@ def fake_llm(monkeypatch):
     覆盖 app.llm.get_chat_model 后，所有节点取到的都是这个 fake。
     """
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
     from app import llm as llm_module
 
     def _make(responses):

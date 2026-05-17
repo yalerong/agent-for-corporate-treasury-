@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import sys
 from decimal import Decimal
+from typing import cast
 
 from langchain_core.messages import HumanMessage
 
 from app.agents.nodes import _classify_intent, supervisor_node
 from app.graph.routing import route_by_intent
-from app.graph.state import TreasuryState
-
+from app.graph.state import TreasuryState, UserRoleStr
 
 CASES = [
     ("查一下今天工行账户的余额", "inquiry"),
@@ -63,13 +63,13 @@ def main() -> int:
     for query, role, amount, expected_route in routing_cases:
         state: TreasuryState = {
             "messages": [HumanMessage(content=query)],
-            "user_role": role,
+            "user_role": cast(UserRoleStr, role),
         }
         if amount is not None:
             state["amount"] = amount
 
         sup_out = supervisor_node(state)
-        merged = {**state, **sup_out}
+        merged: TreasuryState = {**state, **sup_out}
         actual_route = route_by_intent(merged)
 
         status = "OK " if actual_route == expected_route else "MISS"
