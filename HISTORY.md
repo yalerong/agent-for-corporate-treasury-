@@ -12,7 +12,7 @@
 
 - **项目名称**: Corporate Treasury Agent（企业资金智能体）
 - **启动日期**: 2026-05-15
-- **当前阶段**: Phase 1 — 最小可运行骨架（自 2026-05-16）
+- **当前阶段**: Phase 2 完整版 + 本地 Gradio UI + 知识库双轨全链路通（2026-05-16）— Phase 3 待启动
 - **上一阶段**: Phase 0（方向澄清与文档基线）完成于 2026-05-16
 - **技术负责人**: [待填写]
 - **业务负责人**: [待填写]
@@ -31,6 +31,9 @@
 - 热更新脚本：`scripts/update_enterprise_kb.py`
 - 测试：10 个测试文件，共 **136 个测试** 2.50s 全绿
 - **占位/未做**：Tool 仅 search_*_knowledge 两个真实业务（其他 Tool 类如 check_position / execute_transfer 待真实业务系统对接）；cashier / treasury_supervisor 节点仍 placeholder；脱敏映射无真实数据；持久化 checkpointer / Docker / MCP / 银企对接为 Phase 3
+- **真实 LLM 冒烟（2026-05-16）**：DeepSeek `deepseek-v4-flash` 走 OpenAI 兼容端点已端到端验证，详见下方"Phase 2 端到端冒烟"迭代
+- **本地 Gradio UI（2026-05-16）**：`python -m app.web` 起本地网页（127.0.0.1:7860），多轮聊天 + 角色切换 + HITL 审批面板，详见下方"本地 UI + 知识库上线"迭代
+- **知识库双轨全链路（2026-05-16）**：BGE-large-zh 模型 + Qdrant 本地文件 + 4 个 stub markdown（共 4 chunks）+ DeepSeek 合成带来源标注 已端到端跑通
 
 ---
 
@@ -496,6 +499,129 @@ def my_tool(...): ...
 
 ---
 
+### Iteration 2026-05-16: Phase 2 端到端冒烟 — 真实 DeepSeek 接入
+
+**改动范围**: 新增 `scripts/smoke_*.py` 三件套 + `.env`（不入库）；不动应用层代码
+**触发原因**: Phase 2 完整版 136 测试全用 fake_llm 跑过，但从未用真模型端到端走 supervisor 意图分类 + HITL 中断/恢复；用户提供 DeepSeek API key 后做一次正式冒烟，确认 Phase 3 准入
+
+**用户决策**:
+- 模型选 `deepseek-v4-flash`（走 OpenAI 兼容端点 `https://api.deepseek.com/v1`，先试错了再 fallback 到 `deepseek-chat`）
+- 跳过知识库索引和 Knowledge Agent 双轨合成冒烟（避免下载 ~1.2GB 的 BGE 模型）
+- 只验证：连通性、Supervisor LLM 意图分类、路由 + 角色权限校验、HITL approve/reject 双路径
+
+**新增冒烟脚本**:
+- `scripts/smoke_deepseek.py`：最小连通性，验证 `.env` 加载 + `ChatOpenAI` 实例化 + 一次 invoke 拿到 content
+- `scripts/smoke_supervisor.py`：6 句自然语言喂 `_classify_intent`（覆盖 inquiry/fx/transfer 小/transfer 大/knowledge/aml）+ 4 个 `supervisor_node` → `route_by_intent` 端到端用例（覆盖 cashier 路径、treasury_supervisor 路径、treasury_manager 路径 ×2）
+- `scripts/smoke_hitl.py`：3 场景（大额 transfer → approve；大额 transfer → reject；小额 transfer → 无 HITL 直接 END），每场景独立 thread_id + `graph.invoke(Command(resume=...), config={"configurable": {"thread_id": ...}})` 恢复
+
+**结果**:
+- 连通性 ✅（`deepseek-v4-flash` 在 `/v1` 端点直接识别，无需 fallback）
+- 意图分类 6/6 全对 ✅
+- 路由 + 权限 4/4 全对 ✅
+- HITL 三场景 3/3 全对 ✅（approve 路径回写 `approved_instruction_id`；reject 路径置 `current_role="rejected"`；小额 transfer 不触发 HITL）
+
+**关键发现**（HISTORY 经验池新增）:
+1. **DeepSeek `/v1` OpenAI 兼容端点已支持 v4 系列模型名**（`deepseek-v4-flash` / `deepseek-v4-pro`），不止官方文档里的 `deepseek-chat` / `deepseek-reasoner`。这意味着 CLAUDE.md 的 Claude Code 启动脚本（`/anthropic` 端点）和本项目（`/v1` 端点）可以共用同一份模型名约定。
+2. **v4-flash 即使被命名为 "flash" 也带 reasoning tokens**：一次 12 input / 46 output 的简单调用，其中 reasoning tokens = 40。对 token 成本预算和延迟估算有影响，Phase 3 接生产监控时需把 `reasoning_tokens` 单独统计。
+3. **Windows 终端 GBK 解码**：`scripts/` 输出中文经 PowerShell 默认 GBK 解码出现乱码，但 LLM 真实返回内容正常（`scripts/smoke_supervisor.py` 用 ASCII 标签如 `[OK]` 完全绕开此问题）。结论与 HISTORY.md 经验教训 #4 一致：`chcp 65001` 或 Python `-X utf8` 都可修复，业务逻辑无问题。
+
+**遗留**:
+- Knowledge Agent 端到端冒烟（双轨检索 + LLM 合成 + [来源:] 标注）未跑；要跑需先 `pip install langchain-huggingface sentence-transformers` 并接受首次 ~1.2GB 模型下载
+- main.py CLI 仍不支持 `--resume`，HITL 恢复只能通过 API 或脚本；非阻塞性，但 Phase 3 加 CLI resume 选项可提升 ops 友好度
+- 冒烟脚本未纳入 `pytest`；目前是手动 `python -m scripts.smoke_*` 调用。如要进 CI，需要 mark 为 integration test + 跳过条件（无 `LLM_API_KEY` 时 skip）
+
+**Phase 3 准入达成**: 真实 LLM 端到端 + HITL 中断/恢复均无回归，可以推进 Docker / PostgresSaver / MCP / 鉴权 / 银企对接任一项
+
+---
+
+### Iteration 2026-05-16: 本地 UI + 知识库上线
+
+**改动范围**: 新增 `app/web.py`（Gradio）+ `scripts/build_kb.py` + `scripts/smoke_retrieval.py` + `scripts/smoke_knowledge.py`；首次安装 `langchain-huggingface / sentence-transformers / torch` + 下载 BGE 模型；首次写入 `qdrant_data/`
+**触发原因**: 上轮冒烟后用户明确"先不走 Phase 3，本地能聊天起来"，选择 Gradio 网页交互；网页跑通后又选"知识库先搞起来"，把 BGE 双轨补齐
+
+**新增**:
+- `app/web.py`：Gradio 6.x Blocks 网页（`gr.Chatbot` MessageDict 格式 + `gr.State` 维持 thread_id + `gr.Group` 审批面板）
+  - 聊天 → `supervisor_node` 自动分类意图（复用 Phase 2 LLM 分类）
+  - HITL 中断时弹出审批面板（指令编号输入框 + 批准/拒绝按钮）
+  - 中文金额抽取 `_extract_amount()`（正则 `(\d+(?:\.\d+)?)\s*(亿|千万|百万|万)`，要求显式单位避免误抓 ID 数字）
+  - "新会话" 按钮重置 thread_id 与 pending_interrupt
+  - 知识库守门初版（如未装 BGE 返回友好提示）→ 知识库上线后已移除
+- `scripts/build_kb.py`：双轨索引 CLI（`--track {industry,enterprise,both}` + `--check` dry-run），首次跑会触发 BGE 模型下载
+- `scripts/smoke_retrieval.py`：BGE 检索冒烟（不走 LLM，仅验证 Qdrant 召回）
+- `scripts/smoke_knowledge.py`：`knowledge_node` 端到端冒烟（BGE 检索 + DeepSeek 合成）
+- `qdrant_data/`：industry 2 chunks + enterprise 2 chunks（4 个 stub markdown 都不超过 500 字符的 chunk_size，整文件 = 1 chunk）
+
+**依赖安装**:
+- `gradio==6.14.0` + 一票传递依赖（fsspec / hf-xet / huggingface-hub / typer / rich 等）
+- `langchain-huggingface==1.2.2` + `sentence-transformers==5.5.0` + `torch==2.12.0` + `transformers==5.8.1` + `tokenizers==0.22.2` + `safetensors==0.7.0` + `scikit-learn==1.8.0` + `scipy==1.17.1` + `numpy 系列` 等
+- 模型缓存：`C:\Users\46673\.cache\huggingface\hub\models--BAAI--bge-large-zh-v1.5`（约 1.2GB），下次免下载
+
+**关键发现**:
+1. **Gradio 6.x API 与 5.x 不同**：`gr.Chatbot` 移除了 `type="messages"`（MessageDict 已成默认）；`gr.Blocks(theme=...)` 已被弃用，theme 须传给 `launch(theme=...)`。一次性两个 TypeError 撞出来，没影响功能但要注意未来升级
+2. **DeepSeek v4-flash 真实知识合成效果好**：实测能输出 markdown 表格 + 分维度对比 + 明确指出"资料中未出现"边界；来源标注虽然没严格按 prompt 模板（输出 `[行业法规参考1 第19条]` 而非 `[来源: industry/regulations/aml_law.md]`），意图正确，未来加 few-shot 可强化
+3. **Qdrant 本地文件锁是 per-process advisory lock**：上一个进程退出（即使 `__del__` 报 `sys.meta_path is None` 异常）后，`.lock` 文件残留不影响下个进程开新 client。验证了 HISTORY 经验池 #6 的更精确描述：是 OS 进程级锁而非纯文件锁
+4. **Windows 上 HuggingFace symlink 警告**：`huggingface_hub` 默认用 symlink 复用文件，Windows 非 admin 模式下降级为复制；体积稍大但不影响功能，可设 `HF_HUB_DISABLE_SYMLINKS_WARNING` 静音
+5. **`QdrantClient.__del__` 退出顺序异常**：Python 解释器关闭时 `sys.meta_path` 被设为 None，Qdrant cleanup hook 找不到子模块，无害异常但每次脚本退出都会刷一次堆栈
+
+**结果**:
+- ✅ Gradio 网页 HTTP 200 / 95KB 页面，浏览器自动打开 7860
+- ✅ `scripts/smoke_retrieval.py`：BGE 召回 4 个 stub 中相关段落
+- ✅ `scripts/smoke_knowledge.py`：两条查询（跨境资金池差异 / 大额交易报告标准）均生成多段带来源标注的回答
+- ✅ Gradio 端 HITL 路径不变（沿用 Phase 2 测试）
+
+**遗留**:
+- 来源标注格式不严格（LLM 没完全按模板），需 few-shot 优化
+- 4 个 stub 文档都不到 500 字符，未真正触发 chunking；接真实法规后才能检验切分质量
+- 冒烟脚本三件套（`smoke_deepseek` / `smoke_supervisor` / `smoke_hitl` / `smoke_retrieval` / `smoke_knowledge`）未纳入 pytest，仍是手动 `python -m`
+- `requirements.txt` 未追加 `gradio` 与 `langchain-huggingface / sentence-transformers` 的"启用条件"说明（目前已实际安装，但 requirements 仍标注延迟导入）
+- Gradio Web 没有 ADR：是否纳入正式架构，Phase 3 决定（候选：保留为开发期工具 vs 升级为产品 UI 之一)
+
+---
+
+### Iteration 2026-05-16: 意图分类误分修复（HITL 误触发）
+
+**改动范围**: `app/agents/nodes.py::_classify_intent` 的 prompt（其他代码不动）；新增 `scripts/smoke_classify_kb.py` 回归测试
+**触发原因**: 用户在 Gradio 网页问知识题（"大额交易报告标准是什么？""可疑交易识别要点"等）时，**每个问题都弹人工审批**。bug 阻断了知识库的可用性
+
+**根因**:
+- 原 prompt 给每个意图只列了关键词（"aml: 反洗钱、可疑交易"等），没区分**咨询规则** vs **执行业务**
+- LLM 看到"反洗钱""调拨""跨境"等关键词就分到对应业务意图（aml / transfer / fx）
+- 这些意图在 `route_by_intent` 中路由到 `treasury_manager` 节点
+- `treasury_manager_node` 对 aml / fx / investment / 大额 transfer 置 `requires_approval=True`
+- 触发 HITL `interrupt()`，前端弹审批面板
+
+**`scripts/smoke_classify_kb.py` 修前实测**（12 个知识题 + 4 个真业务对照）:
+- 7/12 知识题被误分到 aml / transfer：
+  - "大额交易报告标准" → aml
+  - "公司内部调拨的审批权限" → transfer
+  - "可疑交易识别要点" → aml
+  - "150 万单位调拨要上报反洗钱中心吗" → aml
+  - "800 万境内付款审批流程" → transfer
+  - "5 万元跨境调拨手续" → transfer
+  - "可疑交易识别我们比国家严在哪" → aml
+- 4/4 对照组（真业务）正确分类
+- **总分: 9/16**
+
+**修复**:
+prompt 顶部加入"**关键判别规则**"：
+> 如果用户在询问规则/标准/流程/阈值/定义/对比（含"是什么""怎么办""有什么区别""要不要""手续""权限"等咨询语气），即使话题关于反洗钱/外汇/调拨/投资，**统一归类为 knowledge**。只有用户表达要**实际执行业务动作**（"帮我做""我要执行""我发现""上报""转出"等）时，才分到对应业务意图。
+
+每个业务意图的说明改为"执行 XX"（动作语义）；新增 9 条 few-shot 示例，含 4 条"咨询反洗钱/外汇/调拨话题但归 knowledge"的边界例子。
+
+**验证**: `scripts/smoke_classify_kb.py` 重跑 **16/16 全过**；Gradio 进程重启后用户可直接试 7 个原本卡审批的问题
+
+**关键发现**:
+1. **意图分类的隐性偏置**：仅靠关键词描述的 prompt 让 LLM 学到"含 X 词 → 选 X 意图"的捷径，咨询/执行的语义区分要显式说明。未来在 `Intent` 枚举中加新意图时，必须同步在 prompt 里加示例和判别规则
+2. **HITL 误触发是阻断性体验问题**：业务侧 HITL 是"必要摩擦"，但当意图分类错时这个摩擦完全没价值；下游路由设计假设上游分类是对的，错分会被 HITL 放大成阻断
+3. **prompt 改动需要回归测试**：之前 `scripts/smoke_supervisor.py` 只测了 4 个明确的场景，没覆盖"咨询规则但话题敏感"的边界。新增 `scripts/smoke_classify_kb.py` 后续 prompt 任何修改都要跑两个回归
+
+**遗留 / 后续**:
+- `smoke_classify_kb.py` 应该并入 `smoke_supervisor.py` 或者两者一起纳入 pytest（仍未做）
+- few-shot 用了 9 个示例，token 成本上升约 2-3x；v4-flash 跑 16 次平均仍 < 2s/次，可接受。若改用更便宜的纯关键词路由（非 LLM）可省 token，但损失"咨询语气"的灵活识别 — Phase 3 评估
+- 当前 prompt 默认偏向 knowledge（"首选"），可能让真业务请求被错分到 knowledge — 验证未发现回归，但需观察实际使用
+
+---
+
 ## 配置审查记录
 
 ### 审查 2026-05-15: 初始配置审查
@@ -528,6 +654,10 @@ def my_tool(...): ...
 6. **2026-05-16**: Qdrant 本地文件模式 `QdrantClient(path=...)` 同一进程内不能开多个 client，会锁定文件；必须 `lru_cache` 单例化。测试用 `QdrantClient(location=":memory:")` 隔离，且单一 client 内可挂多个 collection。
 7. **2026-05-16**: pydantic `SecretStr` 在 `repr/str` 中自动掩码为 `**********`，但 `f"{settings}"` 也走 `str()` — 写日志时无需担心明文 API Key 泄露；但读取真实值必须显式 `.get_secret_value()`。
 8. **2026-05-16**: LangGraph `add_messages` reducer 必须用 `Annotated[list[BaseMessage], add_messages]` 标注，否则节点返回 `{"messages": [...]}` 会覆盖而非追加。状态字段的 reducer 注解是 LangGraph 的核心约定。
+9. **2026-05-16**: Gradio 6.x 与 5.x API 不兼容：`gr.Chatbot(type="messages")` → 不再有 `type` 参数（MessageDict 是默认）；`gr.Blocks(theme=...)` → 须改为 `demo.launch(theme=...)`。升级前先在 venv 装新版本跑一次最小 demo。
+10. **2026-05-16**: Qdrant 本地文件模式的 `.lock` 是 **per-process advisory lock**，进程退出（即使 `__del__` 抛 `sys.meta_path is None`）后自动失效；下个进程可正常开新 client，残留 `.lock` 文件不需要手动删。但同一进程并发会真正冲突，仍需 `lru_cache` 单例。
+11. **2026-05-16**: Windows + HuggingFace 默认开启 symlink 缓存，非 admin 模式会刷一长串警告；可通过设 `HF_HUB_DISABLE_SYMLINKS_WARNING=1` 静音，或在 Developer Mode 下运行启用真 symlink（省磁盘）。
+12. **2026-05-16**: LLM 意图分类 prompt **必须区分"咨询规则"vs"执行业务"**。仅靠关键词描述的 prompt 会让 LLM 在咨询语气的法规话题（"反洗钱报告标准是什么"）上误分到对应业务意图（aml），路由到 manager 节点后触发 HITL 误阻断。修法：prompt 顶加判别规则 + 加咨询场景的 few-shot 示例。**新增意图时同步更新示例**。
 
 ---
 
@@ -547,6 +677,9 @@ def my_tool(...): ...
 | 2026-05-16 | pydantic / pydantic-settings | 锁定 `>=2.0,<3.0` | 配置基线已落地 |
 | 2026-05-16 | pytest / ruff | 锁定 `>=8.0,<9.0` / `>=0.6,<1.0` | 测试与 lint 工具 |
 | 2026-05-16 | fastapi / uvicorn | 暂未引入（Phase 2） | requirements.txt 已标注待引入位置 |
+| 2026-05-16 | langchain-huggingface | **实际安装** 1.2.2 | 知识库上线触发；BGE-large-zh 模型已下载到 `~/.cache/huggingface/`（~1.2GB） |
+| 2026-05-16 | sentence-transformers | **实际安装** 5.5.0 | 同上；间接拉入 torch 2.12.0 / transformers 5.8.1 / scikit-learn 1.8.0 / scipy 1.17.1 等 |
+| 2026-05-16 | gradio | **实际安装** 6.14.0 | 本地网页交互；API 与 5.x 不同（Chatbot 无 `type` 参数；theme 移至 `launch()`） |
 
 ---
 

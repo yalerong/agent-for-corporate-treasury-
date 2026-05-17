@@ -34,21 +34,42 @@ def _last_human_message(state: TreasuryState) -> str | None:
 
 
 def _classify_intent(query: str) -> str:
-    """用 LLM 把用户自然语言分类到 Intent 枚举之一。"""
-    prompt = f"""把下面这句资金业务请求分类到下列意图之一：
+    """用 LLM 把用户自然语言分类到 Intent 枚举之一。
+
+    关键判别原则：先看是"咨询规则"还是"执行业务"。咨询语气一律归 knowledge，
+    即使话题关于反洗钱/外汇/调拨，避免把法规咨询误分到 aml/fx/transfer 导致
+    误触发 HITL 审批。
+    """
+    prompt = f"""你是企业资金 Agent 的意图分类器。把用户请求分类到下列意图之一：
 {", ".join(VALID_INTENTS)}
 
-意图说明：
-- inquiry: 余额、流水、账户状态查询
-- reconciliation: 对账、核对
-- transfer: 调拨、付款
-- planning: 资金计划、预算
-- position: 头寸查询、敞口
-- account: 账户管理
-- fx: 外汇、汇率、套保
-- aml: 反洗钱、可疑交易
-- investment: 投资、理财
-- knowledge: 法规咨询、制度咨询
+**关键判别规则（必须先看）**：
+如果用户在询问规则/标准/流程/阈值/定义/对比（含"是什么""怎么办""有什么区别""要不要""手续""权限"等咨询语气），
+即使话题关于反洗钱/外汇/调拨/投资，**统一归类为 knowledge**。
+只有用户表达要**实际执行业务动作**（"帮我做""我要执行""我发现""上报""转出"等）时，才分到对应业务意图。
+
+意图说明（确认是执行业务后参考）：
+- inquiry: 查询余额、流水、账户状态
+- reconciliation: 执行对账、核对
+- transfer: 执行调拨、付款
+- planning: 编制资金计划、预算
+- position: 查询头寸、敞口
+- account: 账户开立、变更等管理
+- fx: 执行外汇交易、套保操作
+- aml: 上报可疑交易、执行 AML 调查
+- investment: 执行投资、理财
+- knowledge: 任何法规/制度/流程/定义/阈值的咨询（**首选**）
+
+示例：
+- "大额交易报告标准是什么？" → knowledge
+- "可疑交易识别要点有哪些？" → knowledge
+- "公司调拨审批权限怎么分？" → knowledge
+- "150 万单位调拨要上报吗？" → knowledge（询问规则）
+- "5 万元跨境调拨需要什么手续？" → knowledge
+- "发现一笔可疑交易需要上报" → aml（实际业务动作）
+- "帮我调拨 500 万到 ACC-001" → transfer
+- "查工行账户余额" → inquiry
+- "我要做 1 亿美元远期套保" → fx
 
 请求："{query}"
 
