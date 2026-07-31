@@ -1,0 +1,18 @@
+﻿entity,project,currency,week,start,forecast,source,confidence,approved,note,payee
+HK Co,运营,USD,W+1,2026-07-31,23035.05,weekly_level,provisional,False,provisional-仅提示,
+SG Co,营销,SGD,W+1,2026-07-31,6291.51,weekly_level,provisional,False,provisional-仅提示,
+SG Co,运营,SGD,W+1,2026-07-31,10758.35,weekly_level,provisional,False,provisional-仅提示,
+,,USD,W+1,2026-07-31,18000.0,recurring@5日,high,False,,Landlord Ltd
+HK Co,运营,USD,W+2,2026-08-07,23035.05,weekly_level,provisional,False,provisional-仅提示,
+SG Co,营销,SGD,W+2,2026-08-07,6291.51,weekly_level,provisional,False,provisional-仅提示,
+SG Co,运营,SGD,W+2,2026-08-07,10758.35,weekly_level,provisional,False,provisional-仅提示,
+,,CNY,W+2,2026-08-07,151879.68,recurring@10日,high,False,,深圳子公司(关联方)
+HK Co,运营,USD,W+3,2026-08-14,23035.05,weekly_level,provisional,False,provisional-仅提示,
+SG Co,营销,SGD,W+3,2026-08-14,6291.51,weekly_level,provisional,False,provisional-仅提示,
+SG Co,运营,SGD,W+3,2026-08-14,10758.35,weekly_level,provisional,False,provisional-仅提示,
+,,USD,W+3,2026-08-14,118669.86,recurring@15日,high,False,,ADP Payroll
+,,SGD,W+3,2026-08-14,88225.72,recurring@20日,provisional,False,,IRAS
+,,USD,W+3,2026-08-14,11817.38,recurring@16日,high,False,,Vendor-4
+HK Co,运营,USD,W+4,2026-08-21,23035.05,weekly_level,provisional,False,provisional-仅提示,
+SG Co,营销,SGD,W+4,2026-08-21,6291.51,weekly_level,provisional,False,provisional-仅提示,
+SG Co,运营,SGD,W+4,2026-08-21,10758.35,weekly_level,provisional,False,provisional-仅提示,

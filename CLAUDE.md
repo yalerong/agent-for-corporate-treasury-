@@ -11,7 +11,7 @@
 
 基于 LangGraph + LangChain 的企业级资金管理 Multi-Agent 系统，覆盖出纳、资金主管、资金经理三岗协作，具备双轨知识库（行业法规 + 企业制度）和合规风控能力。
 
-**当前状态**: 2026-05-16 时，本目录只有文档文件，尚未创建可运行代码。所有 `app/`、`main.py`、`requirements.txt`、`knowledge_base/`、`scripts/`、`tests/` 路径均为目标结构，开发时必须先创建骨架再实现功能。
+**当前状态**: 2026-07-31 起包含两条可运行主线——`app/` 对话智能体（LangGraph + 双轨 RAG + Gradio）与 `cashflow/` 资金数据核心（付款入库 → 规律提炼 → 差异/预测/管控报告，纯本地无需 API Key）。`cashflow/` 的设计蓝图见 `DESIGN_V2.md`；真实数据与规律库全部 gitignore，仓库只含代码与合成示例（`examples/`）。
 
 ---
 

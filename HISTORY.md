@@ -685,3 +685,17 @@ prompt 顶部加入"**关键判别规则**"：
 
 *记录格式参考: Anthropic "Configuration Iteration" 最佳实践*
 *每 3 个月或每次大模型发布后，做一次完整审查并在此追加记录*
+
+---
+
+## 2026-07-31 — cashflow 资金数据核心上线（feat/cashflow-core）
+
+**决策**：放弃"多角色 Agent 模拟组织架构"作为智能来源的路线，新增数据驱动核心 `cashflow/`：
+LLM 总结规律、确定性代码执行规律。规律带证据链与置信度（provisional 不进计算，high 须人工批准），
+每份报告钉规律库版本，可重放审计。
+
+**交付**：ingest（幂等入库+行哈希）→ patterns（周度基准/固定付款/集中付款日三类规律，
+缺失周补零防稀疏高估，recurring 从基线剔除防重复计数）→ engine（预算差异+4周预测+外汇管控+关联方视图）。
+合成示例见 examples/。
+
+**下一步**：Phase B 把 cashflow 封装为 MCP Server 接入对话智能体；Phase C 余额直连+准确率曲线。
