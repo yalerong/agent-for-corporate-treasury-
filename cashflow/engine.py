@@ -103,6 +103,64 @@ def forecast_4w(pats, asof: pd.Timestamp):
     return fc
 
 
+def load_balances():
+    """每账户取最新 as_of 的余额快照；balances 表不存在/为空时返回 None。"""
+    con = sqlite3.connect(DB)
+    try:
+        bal = pd.read_sql("SELECT * FROM balances", con)
+    except Exception:
+        return None
+    finally:
+        con.close()
+    if bal.empty:
+        return None
+    return (bal.sort_values("as_of")
+            .groupby(["entity", "account", "currency"], as_index=False).last())
+
+
+def position_view(bal: pd.DataFrame, fc: pd.DataFrame, pay: pd.DataFrame):
+    """头寸视图: 币种余额 − 未来4周预测流出(high) → 缺口/富余 → 调拨建议。
+
+    recurring 规律不带主体，用付款历史里该收款方的主要付款主体归属流出。
+    调拨建议仅为 preview（同币种主体间余缺互补），不生成任何指令。
+    """
+    high = fc[fc["confidence"] == "high"].copy()
+    payee_entity = pay[pay["payee"] != ""].groupby("payee")["entity"] \
+        .agg(lambda s: s.mode().iloc[0])
+    blank = high["entity"] == ""
+    high.loc[blank, "entity"] = high.loc[blank, "payee"].map(payee_entity).fillna("")
+
+    out_cur = high.groupby("currency")["forecast"].sum()
+    bal_cur = bal.groupby("currency")["balance"].sum()
+    lines = ["| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |",
+             "|---|---:|---:|---:|---|"]
+    for cur in sorted(set(bal_cur.index) | set(out_cur.index)):
+        b, o = float(bal_cur.get(cur, 0.0)), float(out_cur.get(cur, 0.0))
+        pos = b - o
+        status = "⚠️ 缺口" if pos < 0 else "富余"
+        lines.append(f"| {cur} | {b:,.0f} | {o:,.0f} | {pos:,.0f} | {status} |")
+
+    # 主体级余缺 → 同币种调拨建议
+    out_ent = high.groupby(["entity", "currency"])["forecast"].sum()
+    bal_ent = bal.groupby(["entity", "currency"])["balance"].sum()
+    ent_pos = bal_ent.sub(out_ent, fill_value=0.0)
+    transfers = []
+    for (ent, cur), pos in ent_pos[ent_pos < 0].items():
+        need = -pos
+        donors = ent_pos[(ent_pos.index.get_level_values("currency") == cur)
+                         & (ent_pos > 0)].sort_values(ascending=False)
+        if len(donors):
+            d_ent = donors.index[0][0]
+            amt = min(need, float(donors.iloc[0]))
+            transfers.append(f"- **调拨建议（preview-only，不生成指令）**: {d_ent} → {ent} "
+                             f"{amt:,.0f} {cur}（{ent} 头寸缺口 {need:,.0f}，"
+                             f"{d_ent} 同币种富余 {float(donors.iloc[0]):,.0f}）")
+        else:
+            transfers.append(f"- **{ent}/{cur}** 头寸缺口 {need:,.0f}，同币种无富余主体，"
+                             f"需购汇/换汇覆盖（见外汇交易管控节）。")
+    return lines, transfers
+
+
 def fx_view(fc: pd.DataFrame, bud, month: str):
     """外汇管控: 未来4周分币种净流出 → 建议交易区间(不超预算额度)与期限匹配。"""
     high = fc[fc["confidence"] == "high"]
@@ -145,7 +203,7 @@ def approvals_view():
     if ap.empty:
         return []
     ap["month"] = ap["created"].str.slice(0, 7)
-    lines = ["\n## 五、审批流程画像\n"]
+    lines = ["\n## 六、审批流程画像\n"]
     for kind, g in ap.groupby("kind"):
         ok = (g["status"] == "已同意").mean()
         med = g["elapsed_hours"].median()
@@ -210,12 +268,21 @@ def main():
             L.append(f"- {r['week']}({r['start']}) {r['payee']} ~{r['forecast']:,.0f} "
                      f"{r['currency']}（{r['source']}）")
 
-    L.append("\n## 三、外汇交易管控建议\n")
+    bal = load_balances()
+    if bal is not None:
+        pos_lines, transfers = position_view(bal, fc, pay)
+        L.append(f"\n## 三、头寸与调拨建议（余额快照 {bal['as_of'].max()}）\n")
+        L += pos_lines
+        if transfers:
+            L.append("")
+            L += transfers
+
+    L.append("\n## 四、外汇交易管控建议\n")
     L += fx_view(fc, bud, month)
 
     if rp:
         monthly, cur = related_party(pay, rp, month)
-        L.append("\n## 四、关联方资金往来\n")
+        L.append("\n## 五、关联方资金往来\n")
         if cur is not None and len(cur):
             for _, r in cur.iterrows():
                 L.append(f"- {month} {r['project']}: {r['sum']:,.0f} {r['currency']}"

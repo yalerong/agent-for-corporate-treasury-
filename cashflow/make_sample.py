@@ -57,13 +57,25 @@ def main(root: Path, force_related_parties: bool = False):
     bud = bud.drop(columns=["金额"])
     bud.to_csv(root / "data" / "budget.csv", index=False, encoding="utf-8-sig")
 
+    # 银行余额快照（截至数据末日）：SG Co 的 CNY 刻意给缺口，演示调拨建议
+    bal_dir = root / "data" / "raw" / "balances"
+    bal_dir.mkdir(parents=True, exist_ok=True)
+    balances = [
+        dict(日期="2026-07-30", 主体="HK Co", 银行="HSBC", 账号="HK-USD-001", 币种="USD", 余额=380000.0),
+        dict(日期="2026-07-30", 主体="HK Co", 银行="HSBC", 账号="HK-CNY-001", 币种="CNY", 余额=500000.0),
+        dict(日期="2026-07-30", 主体="SG Co", 银行="DBS", 账号="SG-SGD-001", 币种="SGD", 余额=260000.0),
+        dict(日期="2026-07-30", 主体="SG Co", 银行="DBS", 账号="SG-CNY-001", 币种="CNY", 余额=60000.0),
+    ]
+    pd.DataFrame(balances).to_csv(bal_dir / "sample_balances.csv",
+                                  index=False, encoding="utf-8-sig")
+
     # 真实 related_parties.yaml 是人工维护的配置，存在时绝不覆盖
     rp = root / "related_parties.yaml"
     if force_related_parties or not rp.exists():
         rp.write_text("related_parties:\n  - 母公司(关联方)\n  - 深圳子公司(关联方)\n",
                       encoding="utf-8")
 
-    print(f"付款 {len(pay)} 笔, 预算 {len(bud)} 行 → {raw}")
+    print(f"付款 {len(pay)} 笔, 预算 {len(bud)} 行, 余额快照 {len(balances)} 账户 → {raw}")
 
 
 if __name__ == "__main__":
