@@ -9,13 +9,13 @@
 """
 import hashlib
 import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pandas as pd
 import yaml
+from constants import get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
 STD_COLS = ["date", "entity", "project", "currency", "payee", "amount", "purpose"]
 
@@ -78,7 +78,7 @@ def main():
         hashlib.md5("|".join(str(x) for x in r).encode()).hexdigest()[:16]
         for r in out[STD_COLS].itertuples(index=False)
     ]
-    out["ingested_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    out["ingested_at"] = datetime.now(UTC).isoformat(timespec="seconds")
 
     con = sqlite3.connect(DB)
     con.execute("""CREATE TABLE IF NOT EXISTS payments(
