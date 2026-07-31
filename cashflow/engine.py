@@ -42,18 +42,33 @@ def load_all(asof: pd.Timestamp):
     return pay, pats, bud, rp
 
 
+# 预算(周付款预测)只覆盖计划性付款；实际取"流程支出"且剔除内部资金移动，才是可比口径
+BUDGET_EXCLUDE = ["同户名划转出款", "关联方拆借出款", "提现出款", "回充出款", "业务账户流水"]
+
+
 def budget_variance(pay, bud, month: str):
+    # 预算是聚合口径（entity/project=全部）时，按同粒度对比实际
+    agg_mode = (bud["entity"] == "全部").all()
+    keys = ["currency"] if agg_mode else GROUP
     act = pay[pay["date"].dt.strftime("%Y-%m") == month]
-    a = act.groupby(GROUP, as_index=False)["amount"].sum().rename(columns={"amount": "actual"})
-    m = bud[bud["month"] == month].merge(a, on=GROUP, how="outer").fillna(0)
+    if agg_mode:
+        act = act[(act["purpose"].str.split("|").str[-1] == "流程支出")
+                  & ~act["project"].isin(BUDGET_EXCLUDE)]
+    a = act.groupby(keys, as_index=False)["amount"].sum().rename(columns={"amount": "actual"})
+    b = bud[bud["month"] == month].groupby(keys, as_index=False)["budget"].sum()
+    m = b.merge(a, on=keys, how="outer").fillna(0)
+    if agg_mode:
+        m["entity"], m["project"] = "全部", "全部"
     m["var"] = m["actual"] - m["budget"]
-    m["var_pct"] = (m["var"] / m["budget"].replace(0, pd.NA) * 100).round(1)
-    # 根因: 每个超支组合找贡献最大的收款方
+    m["var_pct"] = (m["var"] / m["budget"].replace(0, float("nan")) * 100).astype(float).round(1)
+    # 根因: 每个超支组合找贡献最大的收款方/分类
     causes = {}
     for _, r in m[m["var_pct"].abs() > 10].iterrows():
-        g = act[(act["entity"] == r["entity"]) & (act["project"] == r["project"])
-                & (act["currency"] == r["currency"])]
-        top = g.groupby("payee")["amount"].sum().nlargest(2)
+        g = act[act["currency"] == r["currency"]] if agg_mode else act[
+            (act["entity"] == r["entity"]) & (act["project"] == r["project"])
+            & (act["currency"] == r["currency"])]
+        by = "project" if agg_mode else "payee"
+        top = g.groupby(by)["amount"].sum().nlargest(2)
         causes[(r["entity"], r["project"], r["currency"])] = "; ".join(
             f"{p} {v:,.0f}" for p, v in top.items())
     return m.sort_values("var_pct", ascending=False), causes
@@ -165,8 +180,10 @@ def main():
          f"全部数字由确定性引擎计算，可追溯。\n"]
 
     if bud is not None:
-        m, causes = budget_variance(pay, bud, month)
-        L.append(f"## 一、{month} 预算执行差异\n")
+        bud_month = month if (bud["month"] == month).any() else bud["month"].max()
+        m, causes = budget_variance(pay, bud, bud_month)
+        note = "" if bud_month == month else f"（预算数据止于 {bud_month}，取其为对比月）"
+        L.append(f"## 一、{bud_month} 预算执行差异{note}\n")
         L.append("| 主体 | 项目 | 币种 | 预算 | 实际 | 差异% | 差异根因(Top收款方) |")
         L.append("|---|---|---|---:|---:|---:|---|")
         for _, r in m.iterrows():

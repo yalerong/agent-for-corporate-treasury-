@@ -33,3 +33,4 @@ cashflow/runs/
 cashflow/patterns/
 cashflow/column_map.yaml
 cashflow/related_parties.yaml
+cashflow/history_manifest.yaml
