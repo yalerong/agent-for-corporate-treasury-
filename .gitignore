@@ -26,3 +26,10 @@ logs/
 .vscode/
 .idea/
 *.swp
+
+# cashflow 真实数据与产物（合成示例在 examples/ 中显式提交）
+cashflow/data/
+cashflow/runs/
+cashflow/patterns/
+cashflow/column_map.yaml
+cashflow/related_parties.yaml

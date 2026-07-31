@@ -1,0 +1,9 @@
+# 付款导出列名 → 标准字段 映射
+# 复制为 column_map.yaml 后，把左边改成你导出文件里的真实列名
+日期: date            # 付款日期，任何 pandas 可解析格式
+付款主体: entity       # 付款公司/主体
+项目: project         # 项目/业务线，没有可留空
+币种: currency        # CNY/USD/MXN/IDR...
+收款方: payee         # 供应商/收款人
+金额: amount          # 数值，正数=付出
+用途: purpose         # 摘要/用途，可选
