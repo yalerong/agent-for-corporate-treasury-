@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cashflow:
+    name: cashflow lint + tests (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install pandas numpy pyyaml tabulate openpyxl pytest ruff
+      - name: Ruff
+        run: ruff check cashflow tests/cashflow
+      - name: Tests
+        run: pytest tests/cashflow -q
+
+  app:
+    name: app full tests (observing)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 先观察，稳定后转必过
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Tests
+        run: pytest tests --ignore=tests/cashflow -q
