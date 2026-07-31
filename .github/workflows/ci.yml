@@ -19,7 +19,8 @@ jobs:
       - name: Ruff
         run: ruff check cashflow tests/cashflow
       - name: Tests
-        run: pytest tests/cashflow -q
+        # confcutdir 隔断 tests/conftest.py（它 import app 依赖，本作业不安装）
+        run: pytest tests/cashflow -q --confcutdir=tests/cashflow
 
   app:
     name: app full tests (observing)
