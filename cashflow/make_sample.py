@@ -61,10 +61,10 @@ def main(root: Path, force_related_parties: bool = False):
     bal_dir = root / "data" / "raw" / "balances"
     bal_dir.mkdir(parents=True, exist_ok=True)
     balances = [
-        dict(日期="2026-07-30", 主体="HK Co", 银行="HSBC", 账号="HK-USD-001", 币种="USD", 余额=380000.0),
-        dict(日期="2026-07-30", 主体="HK Co", 银行="HSBC", 账号="HK-CNY-001", 币种="CNY", 余额=500000.0),
-        dict(日期="2026-07-30", 主体="SG Co", 银行="DBS", 账号="SG-SGD-001", 币种="SGD", 余额=260000.0),
-        dict(日期="2026-07-30", 主体="SG Co", 银行="DBS", 账号="SG-CNY-001", 币种="CNY", 余额=60000.0),
+        dict(日期="2026-07-30", 公司="HK Co", 银行="HSBC", 账户="HK-USD-001", 币种="USD", 账户余额=380000.0),
+        dict(日期="2026-07-30", 公司="HK Co", 银行="HSBC", 账户="HK-CNY-001", 币种="CNY", 账户余额=80000.0),
+        dict(日期="2026-07-30", 公司="SG Co", 银行="DBS", 账户="SG-SGD-001", 币种="SGD", 账户余额=260000.0),
+        dict(日期="2026-07-30", 公司="SG Co", 银行="DBS", 账户="SG-CNY-001", 币种="CNY", 账户余额=60000.0),
     ]
     pd.DataFrame(balances).to_csv(bal_dir / "sample_balances.csv",
                                   index=False, encoding="utf-8-sig")
