@@ -1,7 +1,7 @@
 # 仅放工具配置。包元数据与依赖见 requirements.txt。
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "cashflow"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

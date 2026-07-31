@@ -8,13 +8,14 @@
 import argparse
 import hashlib
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 import yaml
+from constants import CODE_DIR, get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
 RAW = ROOT / "data" / "raw"
 
@@ -22,10 +23,12 @@ STD_COLS = ["date", "entity", "project", "currency", "payee", "amount", "purpose
 
 
 def load_column_map() -> dict:
-    for name in ("column_map.yaml", "column_map.example.yaml"):
-        p = ROOT / name
-        if p.exists():
-            return yaml.safe_load(p.read_text(encoding="utf-8"))
+    # 数据根目录优先（真实映射），随代码走的 example 兜底
+    for base in (ROOT, CODE_DIR):
+        for name in ("column_map.yaml", "column_map.example.yaml"):
+            p = base / name
+            if p.exists():
+                return yaml.safe_load(p.read_text(encoding="utf-8"))
     raise SystemExit("缺 column_map.yaml")
 
 
@@ -53,7 +56,7 @@ def read_one(path: Path, colmap: dict) -> pd.DataFrame:
         hashlib.md5("|".join(str(x) for x in row).encode()).hexdigest()[:16]
         for row in df[STD_COLS].itertuples(index=False)
     ]
-    df["ingested_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    df["ingested_at"] = datetime.now(UTC).isoformat(timespec="seconds")
     return df
 
 

@@ -11,18 +11,15 @@
 人工批准机制: patterns.yaml 里 approved: false 的 high 规律，engine 会用但标注"待批"。
 """
 import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
-import numpy as np
 import pandas as pd
 import yaml
+from constants import GROUP, get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
 OUT = ROOT / "patterns" / "patterns.yaml"
-
-GROUP = ["entity", "project", "currency"]
 
 
 def load() -> pd.DataFrame:
@@ -53,7 +50,7 @@ def weekly_level(df: pd.DataFrame) -> list[dict]:
         conf = "high" if n >= 8 and cv < 0.5 else "provisional"
         out.append({
             "type": "weekly_level",
-            "key": dict(zip(GROUP, keys)),
+            "key": dict(zip(GROUP, keys, strict=True)),
             "claim": f"周度付款基准 {base:,.0f}（{n}周样本, CV={cv:.2f}, 近4周/前4周={trend:.2f}）",
             "base_weekly": round(base, 2), "cv": round(cv, 2),
             "trend": round(trend, 2), "sample_weeks": n,
@@ -112,7 +109,7 @@ def main():
     rec_payees = {p["key"]["payee"] for p in recs}
     pats = weekly_level(df[~df["payee"].isin(rec_payees)]) + recs + dom_profile(df)
     meta = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "data_range": [str(df["date"].min().date()), str(df["date"].max().date())],
         "rows": len(df),
     }

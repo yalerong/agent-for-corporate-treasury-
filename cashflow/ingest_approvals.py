@@ -6,12 +6,13 @@
 import argparse
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+from constants import get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
 
 
@@ -54,7 +55,7 @@ def main():
         "reason": col("调拨原因", col("标题")).astype(str).str.slice(0, 120),
     })
     out["source_file"] = src.name
-    out["ingested_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    out["ingested_at"] = datetime.now(UTC).isoformat(timespec="seconds")
 
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB)

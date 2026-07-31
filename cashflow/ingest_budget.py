@@ -8,11 +8,11 @@
 用法: python ingest_budget.py --file "C:\\...\\预算汇总（新版） (1).xlsx"
 """
 import argparse
-from pathlib import Path
 
 import pandas as pd
+from constants import get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 
 
 def main():

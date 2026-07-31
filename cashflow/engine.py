@@ -8,15 +8,14 @@
 import argparse
 import sqlite3
 from datetime import timedelta
-from pathlib import Path
 
 import pandas as pd
 import yaml
+from constants import BUDGET_EXCLUDE, GROUP, get_root
 
-ROOT = Path(__file__).parent
+ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
 PAT = ROOT / "patterns" / "patterns.yaml"
-GROUP = ["entity", "project", "currency"]
 
 
 def load_all(asof: pd.Timestamp):
@@ -42,8 +41,14 @@ def load_all(asof: pd.Timestamp):
     return pay, pats, bud, rp
 
 
-# 预算(周付款预测)只覆盖计划性付款；实际取"流程支出"且剔除内部资金移动，才是可比口径
-BUDGET_EXCLUDE = ["同户名划转出款", "关联方拆借出款", "提现出款", "回充出款", "业务账户流水"]
+def comparable_actuals(act: pd.DataFrame, agg_mode: bool) -> pd.DataFrame:
+    """预算可比口径：两种预算粒度统一剔除内部资金移动项目（BUDGET_EXCLUDE）。
+    流水性质=="流程支出" 过滤仅在聚合预算(真实流水)口径下做——明细预算走的
+    合成/历史数据 purpose 无"流水性质"段，过滤会误杀全部实际。"""
+    act = act[~act["project"].isin(BUDGET_EXCLUDE)]
+    if agg_mode:
+        act = act[act["purpose"].str.split("|").str[-1] == "流程支出"]
+    return act
 
 
 def budget_variance(pay, bud, month: str):
@@ -51,9 +56,7 @@ def budget_variance(pay, bud, month: str):
     agg_mode = (bud["entity"] == "全部").all()
     keys = ["currency"] if agg_mode else GROUP
     act = pay[pay["date"].dt.strftime("%Y-%m") == month]
-    if agg_mode:
-        act = act[(act["purpose"].str.split("|").str[-1] == "流程支出")
-                  & ~act["project"].isin(BUDGET_EXCLUDE)]
+    act = comparable_actuals(act, agg_mode)
     a = act.groupby(keys, as_index=False)["amount"].sum().rename(columns={"amount": "actual"})
     b = bud[bud["month"] == month].groupby(keys, as_index=False)["budget"].sum()
     m = b.merge(a, on=keys, how="outer").fillna(0)
