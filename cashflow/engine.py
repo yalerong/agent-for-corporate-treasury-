@@ -32,7 +32,13 @@ def load_all(asof: pd.Timestamp):
             "月份": "month", "付款主体": "entity", "项目": "project",
             "币种": "currency", "预算金额": "budget"})
     rp_path = ROOT / "related_parties.yaml"
-    rp = yaml.safe_load(rp_path.read_text(encoding="utf-8"))["related_parties"] if rp_path.exists() else []
+    rp = {"payees": [], "project_keywords": []}
+    if rp_path.exists():
+        raw = yaml.safe_load(rp_path.read_text(encoding="utf-8"))["related_parties"]
+        if isinstance(raw, list):
+            rp["payees"] = raw
+        else:
+            rp.update(raw)
     return pay, pats, bud, rp
 
 
@@ -73,7 +79,10 @@ def forecast_4w(pats, asof: pd.Timestamp):
                              "start": w0.date(), "forecast": p["avg_amount"],
                              "source": f"recurring@{p['day_of_month']}日",
                              "confidence": p["confidence"], "approved": p["approved"], "note": ""})
-    return pd.DataFrame(rows)
+    fc = pd.DataFrame(rows)
+    if "payee" not in fc.columns:
+        fc["payee"] = ""
+    return fc
 
 
 def fx_view(fc: pd.DataFrame, bud, month: str):
@@ -94,13 +103,44 @@ def fx_view(fc: pd.DataFrame, bud, month: str):
 
 
 def related_party(pay, rp, month: str):
-    g = pay[pay["payee"].isin(rp)].copy()
+    mask = pay["payee"].isin(rp["payees"])
+    for kw in rp["project_keywords"]:
+        mask |= pay["project"].str.contains(kw, na=False)
+    g = pay[mask].copy()
     if g.empty:
         return None, None
     g["month"] = g["date"].dt.strftime("%Y-%m")
-    monthly = g.groupby(["month", "payee", "currency"])["amount"].agg(["sum", "count"]).reset_index()
+    monthly = g.groupby(["month", "project", "currency"])["amount"].agg(["sum", "count"]).reset_index()
     cur = monthly[monthly["month"] == month]
     return monthly, cur
+
+
+def approvals_view():
+    """调拨/付款/报销审批流程画像（approvals 表存在时输出）。"""
+    con = sqlite3.connect(DB)
+    try:
+        ap = pd.read_sql("SELECT * FROM approvals", con)
+    except Exception:
+        return []
+    finally:
+        con.close()
+    if ap.empty:
+        return []
+    ap["month"] = ap["created"].str.slice(0, 7)
+    lines = ["\n## 五、审批流程画像\n"]
+    for kind, g in ap.groupby("kind"):
+        ok = (g["status"] == "已同意").mean()
+        med = g["elapsed_hours"].median()
+        lines.append(f"- **{kind}**：{len(g)} 单，同意率 {ok:.0%}，审批耗时中位数 "
+                     f"{med:.1f} 小时；月均 {len(g) / g['month'].nunique():.0f} 单")
+        top = g["nature"].value_counts().head(3)
+        if len(top):
+            lines.append("  - 性质分布: " + "; ".join(f"{k} {v}单" for k, v in top.items()))
+    slow = ap.nlargest(3, "elapsed_hours")[["kind", "apply_no", "elapsed_hours", "reason"]]
+    if len(slow):
+        lines.append("- 耗时 Top3: " + "; ".join(
+            f"{r['kind']}{r['apply_no']}({r['elapsed_hours']:.0f}h)" for _, r in slow.iterrows()))
+    return lines
 
 
 def main():
@@ -136,9 +176,13 @@ def main():
                      f"{r['budget']:,.0f} | {r['actual']:,.0f} | {r['var_pct']}%{flag} | {c} |")
 
     L.append("\n## 二、未来4周资金预测（分主体/项目/币种）\n")
-    wk = fc[fc["source"] == "weekly_level"].pivot_table(
-        index=GROUP, columns="week", values="forecast", aggfunc="sum")
-    L.append(wk.to_markdown())
+    wl = fc[(fc["source"] == "weekly_level") & (fc["forecast"] > 0)]
+    wk = wl.pivot_table(index=GROUP, columns="week", values="forecast", aggfunc="sum")
+    total_groups = len(wk)
+    wk = wk.assign(_t=wk.sum(axis=1)).nlargest(15, "_t").drop(columns="_t")
+    L.append(wk.to_markdown(floatfmt=",.0f"))
+    if total_groups > 15:
+        L.append(f"\n*按4周合计金额取 Top15 展示，其余 {total_groups - 15} 组见 forecast.csv（未截断）。*")
     recs = fc[fc["source"].str.startswith("recurring")]
     if len(recs):
         L.append("\n**固定付款日提醒**：")
@@ -154,11 +198,14 @@ def main():
         L.append("\n## 四、关联方资金往来\n")
         if cur is not None and len(cur):
             for _, r in cur.iterrows():
-                L.append(f"- {month} {r['payee']}: {r['sum']:,.0f} {r['currency']}"
+                L.append(f"- {month} {r['project']}: {r['sum']:,.0f} {r['currency']}"
                          f"（{r['count']}笔），全部逐笔可追溯至源记录。")
-            L.append("\n近月趋势（金额）：")
-            L.append(monthly.pivot_table(index="month", columns="payee",
-                                         values="sum").tail(4).to_markdown())
+            L.append("\n近月趋势（金额，分类|币种）：")
+            mp = monthly.assign(col=monthly["project"] + "|" + monthly["currency"])
+            L.append(mp.pivot_table(index="month", columns="col",
+                                    values="sum").tail(4).to_markdown(floatfmt=",.0f"))
+
+    L += approvals_view()
 
     L.append(f"\n---\n*待人工批准规律 {sum(1 for p in pats['patterns'] if p['confidence']=='high' and not p['approved'])} 条"
              f"（patterns/patterns.yaml 中 approved:false）；provisional 规律未参与计算。*")
