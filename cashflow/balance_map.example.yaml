@@ -1,0 +1,8 @@
+# 余额导出列名 → 标准字段 映射
+# 复制为 balance_map.yaml 后，把左边改成你导出文件里的真实列名（finweb 余额报表）
+日期: as_of          # 快照日期
+主体: entity         # 归属公司/主体
+银行: bank           # 开户行，可选
+账号: account        # 账户号/别名，可选
+币种: currency       # CNY/USD/SGD...
+余额: balance        # 数值
