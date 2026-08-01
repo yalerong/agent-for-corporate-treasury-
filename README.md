@@ -35,6 +35,7 @@ python validate.py          # 核验环：hit/violated/uncertain 写回 evidence
 python approve.py stats     # 审批 CLI：list / approve / refute——批准(approved)才进计算
 python engine.py            # 行动环：八节报告+forecast.csv+lineage.json → runs/<date>/
 python llm_patterns.py      # 可选 LLM 归纳环：聚合摘要→候选规律（无 LLM_API_KEY 自动跳过）
+python ui.py                # 本地审批台：报告/规律审批/预测明细 → http://127.0.0.1:8787
 ```
 
 接入真实数据只需两步：复制 `column_map.example.yaml` 为 `column_map.yaml` 改成你的导出列名；把 xlsx/csv 丢进 `data/raw/`。
