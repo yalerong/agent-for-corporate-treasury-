@@ -27,15 +27,16 @@
 ```bash
 pip install pandas numpy openpyxl PyYAML tabulate
 cd cashflow
-python make_sample.py   # 生成合成付款数据+预算（或把真实导出放进 data/raw/）
-python ingest.py        # 标准化入库 SQLite（幂等，带来源与哈希）
-python patterns.py      # 学习环：提炼规律 → patterns/patterns.yaml
-python engine.py        # 行动环：月报+预测 → runs/<date>/report.md
+python make_sample.py       # 生成合成付款数据+预算+余额快照（或把真实导出放进 data/raw/）
+python ingest.py            # 付款流水标准化入库 SQLite（幂等，带来源与哈希）
+python ingest_balances.py   # 余额快照入库（finweb 总览导出格式；接口直取用 ingest_balances_api.py）
+python patterns.py          # 学习环：提炼规律 → patterns/patterns.yaml
+python engine.py            # 行动环：月报+预测+头寸/调拨/外汇 → runs/<date>/report.md
 ```
 
 接入真实数据只需两步：复制 `column_map.example.yaml` 为 `column_map.yaml` 改成你的导出列名；把 xlsx/csv 丢进 `data/raw/`。
 
-针对具体系统导出另有四个专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）。
+针对具体系统导出另有专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）；余额双路径——`ingest_balances.py`（finweb 余额总览 Excel 导出）与 `ingest_balances_api.py`（finweb 接口直取，`FINWEB_BASE_URL`/`FINWEB_TOKEN`）。
 
 ---
 

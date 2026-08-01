@@ -103,18 +103,116 @@ def forecast_4w(pats, asof: pd.Timestamp):
     return fc
 
 
-def fx_view(fc: pd.DataFrame, bud, month: str):
-    """外汇管控: 未来4周分币种净流出 → 建议交易区间(不超预算额度)与期限匹配。"""
+def load_balances(asof: pd.Timestamp):
+    """余额快照：只取 as_of<=报告日 的快照（防前视），每账户取其中最新一天。
+
+    空银行/空账号不丢行：填空串分组；同键同快照日的多行求和（无法区分的并列账户）。
+    balances 表不存在/为空时返回 None。
+    """
+    con = sqlite3.connect(DB)
+    try:
+        bal = pd.read_sql("SELECT * FROM balances WHERE as_of<=?", con,
+                          params=(asof.strftime("%Y-%m-%d"),))
+    except Exception:
+        return None
+    finally:
+        con.close()
+    if bal.empty:
+        return None
+    key = ["entity", "bank", "account", "currency"]
+    bal[["bank", "account"]] = bal[["bank", "account"]].fillna("")
+    latest = bal.groupby(key)["as_of"].transform("max")
+    bal = bal[bal["as_of"] == latest]
+    return bal.groupby(key + ["as_of"], as_index=False)["balance"].sum()
+
+
+def split_outflow_by_entity(high: pd.DataFrame, pay: pd.DataFrame) -> pd.Series:
+    """主体级流出: recurring 规律不带主体，按付款历史中该收款方在各主体的
+    金额占比拆分预测（不用众数——同收款方多主体付款时不会张冠李戴）。"""
+    share = pay[pay["payee"] != ""].groupby(["payee", "entity"])["amount"].sum()
+    rows = []
+    for _, r in high.iterrows():
+        if r["entity"]:
+            rows.append((r["entity"], r["currency"], r["forecast"]))
+            continue
+        payees = share.index.get_level_values("payee")
+        if r["payee"] in payees:
+            s = share.loc[r["payee"]]
+            for ent, amt in s.items():
+                rows.append((ent, r["currency"], r["forecast"] * amt / s.sum()))
+        else:
+            rows.append(("", r["currency"], r["forecast"]))
+    return (pd.DataFrame(rows, columns=["entity", "currency", "forecast"])
+            .groupby(["entity", "currency"])["forecast"].sum())
+
+
+def position_view(bal: pd.DataFrame, fc: pd.DataFrame, pay: pd.DataFrame):
+    """头寸视图: 币种余额 − 未来4周预测流出(high) → 缺口/富余 → 调拨建议。
+
+    调拨建议仅为 preview（同币种主体间余缺互补），不生成任何指令；
+    分配会扣减捐出方额度，覆盖不了的残余明示并转外汇节。
+    返回 (头寸表行, 调拨建议行, 各币种购汇缺口)。
+    """
+    high = fc[fc["confidence"] == "high"]
+    out_cur = high.groupby("currency")["forecast"].sum()
+    bal_cur = bal.groupby("currency")["balance"].sum()
+    lines = ["| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |",
+             "|---|---:|---:|---:|---|"]
+    fx_gap = {}
+    for cur in sorted(set(bal_cur.index) | set(out_cur.index)):
+        b, o = float(bal_cur.get(cur, 0.0)), float(out_cur.get(cur, 0.0))
+        pos = b - o
+        fx_gap[cur] = max(0.0, -pos)
+        status = "⚠️ 缺口" if pos < 0 else "富余"
+        lines.append(f"| {cur} | {b:,.0f} | {o:,.0f} | {pos:,.0f} | {status} |")
+
+    # 主体级余缺 → 同币种调拨建议（贪心分配，扣减捐出方可用额度）
+    out_ent = split_outflow_by_entity(high, pay)
+    bal_ent = bal.groupby(["entity", "currency"])["balance"].sum()
+    ent_pos = bal_ent.sub(out_ent, fill_value=0.0)
+    avail = {k: float(v) for k, v in ent_pos[ent_pos > 0].items()}
+    transfers = []
+    for (ent, cur), pos in ent_pos[ent_pos < 0].sort_values().items():
+        need = -float(pos)
+        donors = sorted((k for k in avail if k[1] == cur and avail[k] > 0),
+                        key=lambda k: -avail[k])
+        for d in donors:
+            take = min(need, avail[d])
+            transfers.append(f"- **调拨建议（preview-only，不生成指令）**: {d[0]} → {ent} "
+                             f"{take:,.0f} {cur}（{ent} 头寸缺口 {need:,.0f}，"
+                             f"{d[0]} 可用富余 {avail[d]:,.0f}）")
+            avail[d] -= take
+            need -= take
+            if need <= 0:
+                break
+        if need > 0:
+            transfers.append(f"- **{ent}/{cur}** 同币种调拨后仍缺 {need:,.0f}，"
+                             f"需购汇/换汇覆盖（见外汇交易管控节）。")
+    return lines, transfers, fx_gap
+
+
+def fx_view(fc: pd.DataFrame, bud, month: str, fx_gap: dict | None = None):
+    """外汇管控: 未来4周分币种净流出 → 建议交易区间(不超预算额度)与期限匹配。
+
+    有余额数据时（fx_gap 非 None），购汇建议只针对余额覆盖不了的缺口，
+    避免"头寸富余仍建议全额购汇"的自相矛盾；无余额数据时退回全额口径。
+    """
     high = fc[fc["confidence"] == "high"]
     by_cur = high.groupby("currency")["forecast"].sum()
     lines = []
-    for cur, need in by_cur.items():
+    for cur, outflow in by_cur.items():
+        need = outflow if fx_gap is None else fx_gap.get(cur, 0.0)
+        if fx_gap is not None and need <= 0:
+            lines.append(f"- **{cur}**: 未来4周预测流出 {outflow:,.0f}，"
+                         f"现有余额头寸可覆盖，无需购汇。")
+            continue
         cap = None
         if bud is not None:
             cap = bud[(bud["month"] == month) & (bud["currency"] == cur)]["budget"].sum()
         cap_txt = f"，预算额度上限 {cap:,.0f}" if cap else ""
+        gap_txt = "" if fx_gap is None else f"（预测流出 {outflow:,.0f}，余额覆盖后缺口）"
         amt_lo, amt_hi = need * 0.8, min(need * 1.1, cap) if cap else need * 1.1
-        lines.append(f"- **{cur}**: 未来4周预测净流出 {need:,.0f}{cap_txt}。"
+        lines.append(f"- **{cur}**: 未来4周购汇需求 {need:,.0f}{gap_txt}{cap_txt}。"
                      f"建议购汇/换汇区间 [{amt_lo:,.0f}, {amt_hi:,.0f}]，"
                      f"期限与付款周期匹配（≤4周，忌超额超期）；风险中性，不做方向性判断。")
     return lines
@@ -133,7 +231,7 @@ def related_party(pay, rp, month: str):
     return monthly, cur
 
 
-def approvals_view():
+def approvals_view(sec: str):
     """调拨/付款/报销审批流程画像（approvals 表存在时输出）。"""
     con = sqlite3.connect(DB)
     try:
@@ -145,7 +243,7 @@ def approvals_view():
     if ap.empty:
         return []
     ap["month"] = ap["created"].str.slice(0, 7)
-    lines = ["\n## 五、审批流程画像\n"]
+    lines = [f"\n## {sec}、审批流程画像\n"]
     for kind, g in ap.groupby("kind"):
         ok = (g["status"] == "已同意").mean()
         med = g["elapsed_hours"].median()
@@ -182,11 +280,15 @@ def main():
          f"{pats['meta']['data_range'][1]})；规律库版本 {pats['meta']['generated_at']}；"
          f"全部数字由确定性引擎计算，可追溯。\n"]
 
+    # 可选节（预算/头寸/关联方/审批）缺数据时跳过，编号按实际出现顺序连续
+    numerals = iter("一二三四五六七")
+    sec = lambda: next(numerals)  # noqa: E731
+
     if bud is not None:
         bud_month = month if (bud["month"] == month).any() else bud["month"].max()
         m, causes = budget_variance(pay, bud, bud_month)
         note = "" if bud_month == month else f"（预算数据止于 {bud_month}，取其为对比月）"
-        L.append(f"## 一、{bud_month} 预算执行差异{note}\n")
+        L.append(f"## {sec()}、{bud_month} 预算执行差异{note}\n")
         L.append("| 主体 | 项目 | 币种 | 预算 | 实际 | 差异% | 差异根因(Top收款方) |")
         L.append("|---|---|---|---:|---:|---:|---|")
         for _, r in m.iterrows():
@@ -195,7 +297,7 @@ def main():
             L.append(f"| {r['entity']} | {r['project']} | {r['currency']} | "
                      f"{r['budget']:,.0f} | {r['actual']:,.0f} | {r['var_pct']}%{flag} | {c} |")
 
-    L.append("\n## 二、未来4周资金预测（分主体/项目/币种）\n")
+    L.append(f"\n## {sec()}、未来4周资金预测（分主体/项目/币种）\n")
     wl = fc[(fc["source"] == "weekly_level") & (fc["forecast"] > 0)]
     wk = wl.pivot_table(index=GROUP, columns="week", values="forecast", aggfunc="sum")
     total_groups = len(wk)
@@ -210,12 +312,22 @@ def main():
             L.append(f"- {r['week']}({r['start']}) {r['payee']} ~{r['forecast']:,.0f} "
                      f"{r['currency']}（{r['source']}）")
 
-    L.append("\n## 三、外汇交易管控建议\n")
-    L += fx_view(fc, bud, month)
+    bal = load_balances(asof)
+    fx_gap = None
+    if bal is not None:
+        pos_lines, transfers, fx_gap = position_view(bal, fc, pay)
+        L.append(f"\n## {sec()}、头寸与调拨建议（余额快照 {bal['as_of'].max()}）\n")
+        L += pos_lines
+        if transfers:
+            L.append("")
+            L += transfers
+
+    L.append(f"\n## {sec()}、外汇交易管控建议\n")
+    L += fx_view(fc, bud, month, fx_gap)
 
     if rp:
         monthly, cur = related_party(pay, rp, month)
-        L.append("\n## 四、关联方资金往来\n")
+        L.append(f"\n## {sec()}、关联方资金往来\n")
         if cur is not None and len(cur):
             for _, r in cur.iterrows():
                 L.append(f"- {month} {r['project']}: {r['sum']:,.0f} {r['currency']}"
@@ -225,7 +337,7 @@ def main():
             L.append(mp.pivot_table(index="month", columns="col",
                                     values="sum").tail(4).to_markdown(floatfmt=",.0f"))
 
-    L += approvals_view()
+    L += approvals_view(sec())
 
     L.append(f"\n---\n*待人工批准规律 {sum(1 for p in pats['patterns'] if p['confidence']=='high' and not p['approved'])} 条"
              f"（patterns/patterns.yaml 中 approved:false）；provisional 规律未参与计算。*")

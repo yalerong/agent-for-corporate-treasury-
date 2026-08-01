@@ -1,0 +1,15 @@
+# 余额导出列名 → 标准字段 映射
+# 默认对齐 finweb「余额总览」Excel 导出；自定义时复制为 balance_map.yaml 修改。
+columns:
+  公司: entity          # 归属公司/主体
+  账户: account         # 账户名（finweb 账户名内含银行信息）
+  币种: currency        # CNY/USD/IDR...
+  账户余额: balance      # DS 交叉校验后的账户余额（finweb 口径）
+  # 以下列 finweb 总览导出没有，但导出里有时自动生效：
+  日期: as_of           # 无此列时用 --asof 参数（默认当天）
+  银行: bank
+
+# 可选：finweb 公司名 → 流水口径主体(项目归属/业务线) 的归一映射。
+# 余额的主体要与 payments 的 entity 对得上，头寸/调拨的主体级计算才有意义。
+entity_alias: {}
+#  某某(香港)有限公司: HK Co
