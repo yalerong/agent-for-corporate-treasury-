@@ -1,0 +1,13 @@
+# 自主权滑块（分级自主权的落地配置）：engine 按档标注 forecast 行的 review 列，
+# 只标注不拦截——付款执行永远不给 Agent 工具。
+# 真实阈值：复制本文件为 policy.yaml（已 gitignore）后调整。
+default:
+  flag_review: 50000        # 金额 ≥ 此值 → flag_review（建议复核）
+  require_human: 500000     # 金额 ≥ 此值 → require_human（必须人工确认）
+by_currency:                # 币种覆盖（小面值币种阈值另定）
+  IDR: {flag_review: 500000000, require_human: 5000000000}
+  USDT: {flag_review: 20000, require_human: 200000}
+keywords_require_human:     # 主体/项目/收款方命中关键词 → 直接 require_human
+  - 关联方
+  - 拆借
+  - 注资
