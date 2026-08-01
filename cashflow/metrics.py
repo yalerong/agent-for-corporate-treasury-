@@ -11,6 +11,7 @@ value 是结构化数据（DataFrame/dict/list），排版一律在 engine.build
 import sqlite3
 from datetime import timedelta
 
+import attribution as at
 import pandas as pd
 import pattern_store as ps
 import yaml
@@ -112,16 +113,19 @@ def budget_variance(pay, bud, month: str):
         m["entity"], m["project"] = "全部", "全部"
     m["var"] = m["actual"] - m["budget"]
     m["var_pct"] = (m["var"] / m["budget"].replace(0, float("nan")) * 100).astype(float).round(1)
-    # 根因: 每个超支组合找贡献最大的收款方/分类
+    # 根因: contrib 环比贡献分解——|delta| 最大的收款方/分类（当月额+环比变动一起看）
+    prev_month = (pd.Period(month) - 1).strftime("%Y-%m")
+    act_prev = comparable_actuals(pay[pay["date"].dt.strftime("%Y-%m") == prev_month], agg_mode)
     causes = {}
     for _, r in m[m["var_pct"].abs() > 10].iterrows():
-        g = act[act["currency"] == r["currency"]] if agg_mode else act[
-            (act["entity"] == r["entity"]) & (act["project"] == r["project"])
-            & (act["currency"] == r["currency"])]
+        def sel(df, row=r):
+            return df[df["currency"] == row["currency"]] if agg_mode else df[
+                (df["entity"] == row["entity"]) & (df["project"] == row["project"])
+                & (df["currency"] == row["currency"])]
         by = "project" if agg_mode else "payee"
-        top = g.groupby(by)["amount"].sum().nlargest(2)
+        cb = at.contrib(sel(act), sel(act_prev), [by]).head(2)
         causes[(r["entity"], r["project"], r["currency"])] = "; ".join(
-            f"{p} {v:,.0f}" for p, v in top.items())
+            f"{row[by]} {row['cur']:,.0f}(环比{row['delta']:+,.0f})" for _, row in cb.iterrows())
     return m.sort_values("var_pct", ascending=False), causes
 
 
@@ -135,6 +139,47 @@ def budget_variance_metric(ctx, _out):
     m, causes = budget_variance(ctx["pay"], bud, bud_month)
     return {"month": bud_month, "is_fallback_month": bud_month != month,
             "table": m, "causes": causes}, []
+
+
+# ---------- 异动归因 ----------
+
+@metric("mom_attribution")
+def mom_attribution_metric(ctx, _out):
+    """当月 vs 上月环比异动，按 entity/project/payee 排贡献；命中日历预期日打"预期内"。"""
+    pay, month = ctx["pay"], ctx["month"]
+    prev = (pd.Period(month) - 1).strftime("%Y-%m")
+    mcol = pay["date"].dt.strftime("%Y-%m")
+    cur_df, prev_df = pay[mcol == month], pay[mcol == prev]
+    if cur_df.empty or prev_df.empty:
+        return None, []
+    # 日历预期日查找表：dom_profile 热点日 + recurring 固定日（refuted 不参与）
+    hot, rec_day = {}, {}
+    for p in ctx["pats"]["patterns"]:
+        if ps.status_of(p) == "refuted":
+            continue
+        if p["type"] == "dom_profile":
+            hot[(p["key"]["entity"], p["key"]["currency"])] = {int(d) for d in p["hot_days"]}
+        elif p["type"] == "recurring":
+            rec_day[(p["key"]["payee"], p["key"]["currency"])] = {p["day_of_month"]}
+    rows = []
+    cur_sum = cur_df.groupby("currency")["amount"].sum()
+    prev_sum = prev_df.groupby("currency")["amount"].sum()
+    for cur in sorted(set(cur_sum.index) | set(prev_sum.index)):
+        c, pv = float(cur_sum.get(cur, 0.0)), float(prev_sum.get(cur, 0.0))
+        cb = at.contrib(cur_df[cur_df["currency"] == cur],
+                        prev_df[prev_df["currency"] == cur],
+                        ["entity", "project", "payee"]).head(3)
+        movers = []
+        for _, r in cb.iterrows():
+            g = cur_df[(cur_df["currency"] == cur) & (cur_df["entity"] == r["entity"])
+                       & (cur_df["project"] == r["project"]) & (cur_df["payee"] == r["payee"])]
+            days = hot.get((r["entity"], cur), set()) | rec_day.get((r["payee"], cur), set())
+            movers.append({"entity": r["entity"], "project": r["project"], "payee": r["payee"],
+                           "cur": float(r["cur"]), "delta": float(r["delta"]),
+                           "aligned": at.calendar_align(g, days, month)})
+        rows.append({"currency": cur, "cur": c, "prev": pv, "delta": c - pv, "movers": movers})
+    rows.sort(key=lambda r: -abs(r["delta"]))
+    return {"prev_month": prev, "rows": rows[:6]}, []
 
 
 # ---------- 预测 ----------
@@ -327,3 +372,24 @@ def approvals_profile_metric(_ctx, _out):
     slow = (ap.nlargest(3, "elapsed_hours")[["kind", "apply_no", "elapsed_hours"]]
             .to_dict("records"))
     return {"kinds": kinds, "slow": slow}, []
+
+
+# ---------- 规律核验 ----------
+
+@metric("pattern_validation")
+def pattern_validation_metric(ctx, _out):
+    """读 validate.py 写回的 evidence，出人审清单（违反不自动否决）与自动降级记录。"""
+    pats = [p for p in ctx["pats"]["patterns"]
+            if (p.get("evidence") or {}).get("last_validated")]
+    if not pats:
+        return None, []
+    violated = [p for p in pats if p["evidence"]["misses"] > 0]
+    demoted = [p for p in ctx["pats"]["patterns"] if p.get("demoted_at")]
+    value = {"n": len(pats), "checked_range": pats[0]["evidence"]["checked_range"],
+             "violated": [{"id": p["id"], "type": p["type"], "key": p["key"],
+                           "hits": p["evidence"]["hits"], "misses": p["evidence"]["misses"],
+                           "hit_rate": p["evidence"]["hit_rate"], "status": ps.status_of(p)}
+                          for p in violated],
+             "demoted": [{"id": p["id"], "claim": p["claim"], "demoted_at": p["demoted_at"],
+                          "demoted_reason": p["demoted_reason"]} for p in demoted]}
+    return value, [p["id"] for p in pats]

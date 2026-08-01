@@ -35,8 +35,8 @@ def build_report(ctx: dict, mets: dict) -> str:
         L.append("> ⚠️ 过渡模式: strict-approval（默认开）下 approved 规律为 0，"
                  "本次回退按置信度(high)计算；请用 approve.py 批准规律。\n")
 
-    # 可选节（预算/头寸/关联方/审批）缺数据时跳过，编号按实际出现顺序连续
-    numerals = iter("一二三四五六七")
+    # 可选节（预算/归因/头寸/关联方/审批/核验）缺数据时跳过，编号按实际出现顺序连续
+    numerals = iter("一二三四五六七八")
     sec = lambda: next(numerals)  # noqa: E731
 
     bv = mets["budget_variance"]["value"]
@@ -50,6 +50,16 @@ def build_report(ctx: dict, mets: dict) -> str:
             flag = " ⚠️" if pd.notna(r["var_pct"]) and abs(r["var_pct"]) > 10 else ""
             L.append(f"| {r['entity']} | {r['project']} | {r['currency']} | "
                      f"{r['budget']:,.0f} | {r['actual']:,.0f} | {r['var_pct']}%{flag} | {c} |")
+
+    ma = mets["mom_attribution"]["value"]
+    if ma is not None:
+        L.append(f"\n## {sec()}、当月异动归因（环比 {ma['prev_month']}） <!-- metric: mom_attribution -->\n")
+        for r in ma["rows"]:
+            L.append(f"- **{r['currency']}**: {month} 流出 {r['cur']:,.0f}（环比 {r['delta']:+,.0f}）")
+            for mv in r["movers"]:
+                who = "/".join(x for x in (mv["entity"], mv["project"], mv["payee"]) if x)
+                tag = "（预期内·日历对齐）" if mv["aligned"] else ""
+                L.append(f"  - {who}: {mv['cur']:,.0f}（环比 {mv['delta']:+,.0f}）{tag}")
 
     fc = mets["forecast_4w"]["value"]
     L.append(f"\n## {sec()}、未来4周资金预测（分主体/项目/币种） <!-- metric: forecast_4w -->\n")
@@ -128,6 +138,24 @@ def build_report(ctx: dict, mets: dict) -> str:
         if apv["slow"]:
             L.append("- 耗时 Top3: " + "; ".join(
                 f"{r['kind']}{r['apply_no']}({r['elapsed_hours']:.0f}h)" for r in apv["slow"]))
+
+    pv = mets["pattern_validation"]["value"]
+    if pv is not None:
+        L.append(f"\n## {sec()}、规律核验（人审清单） <!-- metric: pattern_validation -->\n")
+        a, b = pv["checked_range"]
+        L.append(f"- 核验 {pv['n']} 条（窗口 {a} ~ {b}）：无违反 {pv['n'] - len(pv['violated'])} / "
+                 f"违反 {len(pv['violated'])}")
+        if pv["violated"]:
+            L.append("- ⚠️ 违反明细（需人工复核；违反不自动否决，refuted 只能人为）：")
+            for v in pv["violated"]:
+                L.append(f"  - `{v['id']}` {v['type']} {v['key']} :: hit {v['hits']} / "
+                         f"violated {v['misses']}（hit_rate {v['hit_rate']}，当前 {v['status']}）")
+        else:
+            L.append("- 全部通过，无待人审项。")
+        if pv["demoted"]:
+            L.append("- 自动降级（approved→candidate，人工复核后可重批）：")
+            for d in pv["demoted"]:
+                L.append(f"  - `{d['id']}` {d['claim']}（{d['demoted_at']}）")
 
     st = Counter(status_of(p) for p in pats["patterns"])
     pending_high = sum(1 for p in pats["patterns"]

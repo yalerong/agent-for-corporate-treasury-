@@ -31,7 +31,8 @@ python make_sample.py       # 生成合成付款数据+预算+余额快照（或
 python ingest.py            # 付款流水标准化入库 SQLite（幂等，带来源与哈希）
 python ingest_balances.py   # 余额快照入库（finweb 总览导出格式；接口直取用 ingest_balances_api.py）
 python patterns.py          # 学习环：提炼规律 → patterns/patterns.yaml
-python engine.py            # 行动环：月报+预测+头寸/调拨/外汇 → runs/<date>/report.md
+python validate.py          # 核验环：hit/violated/uncertain 写回 evidence，连续失败自动降级
+python engine.py            # 行动环：月报+预测+头寸/调拨/外汇+归因+核验 → runs/<date>/report.md
 ```
 
 接入真实数据只需两步：复制 `column_map.example.yaml` 为 `column_map.yaml` 改成你的导出列名；把 xlsx/csv 丢进 `data/raw/`。
