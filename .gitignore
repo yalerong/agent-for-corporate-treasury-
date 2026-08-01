@@ -34,6 +34,7 @@ cashflow/patterns/
 cashflow/column_map.yaml
 cashflow/related_parties.yaml
 cashflow/history_manifest.yaml
+cashflow/policy.yaml
 TASK_BRIEF.md
 PLAN-*.md
 业务知识-*.md

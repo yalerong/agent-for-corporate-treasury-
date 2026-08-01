@@ -14,6 +14,7 @@ from datetime import timedelta
 import attribution as at
 import pandas as pd
 import pattern_store as ps
+import policy as policy_mod
 import yaml
 from constants import BUDGET_EXCLUDE, CODE_DIR, GROUP, get_root
 
@@ -215,6 +216,13 @@ def forecast_4w_metric(ctx, _out):
     fc = pd.DataFrame(rows)
     if "payee" not in fc.columns:
         fc["payee"] = ""
+    # 自主权滑块：按金额/关键词分档标注 review 列，只标注不拦截
+    pol = policy_mod.load_policy()
+    if pol is not None and not fc.empty:
+        fc["review"] = [
+            policy_mod.review_tier(r["forecast"], r["currency"],
+                                   f"{r['entity']}{r['project']}{r['payee']}", pol)
+            for _, r in fc.iterrows()]
     return fc, ([] if fc.empty else list(fc["pattern_id"]))
 
 

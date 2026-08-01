@@ -11,7 +11,7 @@
 
 基于 LangGraph + LangChain 的企业级资金管理 Multi-Agent 系统，覆盖出纳、资金主管、资金经理三岗协作，具备双轨知识库（行业法规 + 企业制度）和合规风控能力。
 
-**当前状态**: 2026-07-31 起包含两条可运行主线——`app/` 对话智能体（LangGraph + 双轨 RAG + Gradio）与 `cashflow/` 资金数据核心（付款入库 → 规律提炼 → 差异/预测/管控报告，纯本地无需 API Key）。`cashflow/` 的设计蓝图见 `DESIGN_V2.md`；真实数据与规律库全部 gitignore，仓库只含代码与合成示例（`examples/`）。
+**当前状态**: 2026-08-01 起包含两条可运行主线——`app/` 对话智能体（LangGraph + 双轨 RAG + Gradio）与 `cashflow/` 资金数据核心（入库 → 三态规律库 → 核验 → 八节报告+lineage，纯本地无需 API Key；LLM 归纳环可选、离线可退化）。`cashflow/` 的设计蓝图见 `DESIGN_V2.md`；真实数据与规律库全部 gitignore，仓库只含代码与合成示例（`examples/`）。
 
 ---
 
@@ -104,7 +104,16 @@ def check_position(entity_code: str, date: str) -> dict:
 - **资金经理 Agent** 必须包含："你拥有大额审批权与合规认定权，但不得直接调用付款执行工具。"
 - **禁止在 Prompt 里写死具体金额阈值**（如"500万"），阈值从 `config.py` 的授权矩阵动态读取
 
-### 4.3 双轨知识库查询规范
+### 4.3 cashflow/ 数据核心铁律
+
+- 平铺脚本目录（`cd cashflow && python xxx.py` 直跑），**不加 `__init__.py`**；共享代码走兄弟模块（`constants.py` / `pattern_store.py` / `metrics.py`）；不 import `app/`、不引 langchain
+- 三态规律库：计算只信 `status==approved`（strict 门控默认开）；`refuted` 只能人为置；自动核验（validate.py）只降级不否决
+- 排版与计算分离：数字全部出自 `metrics.py` 指标层（metrics.yaml 登记 + lineage 血缘），`engine.build_report` 只做 f-string 排版
+- LLM 只见聚合 profile（`profiles.py`，绝不含单笔流水），产出只进 candidate 池且必须过数字复算 verifier，**永不置 approved**；无 `LLM_API_KEY` 全流程照常
+- 任何改动必须过 `tests/cashflow` golden 回归网；golden 变更是受控更新，diff 须人工过目
+- 两个防错设计不许改回去：稀疏周补零、recurring 从周度基线剔除
+
+### 4.4 双轨知识库查询规范
 
 - 涉及法规、合规底线、监管要求 → 调用 `search_industry_knowledge`
 - 涉及内部审批流程、金额阈值、操作规范 → 调用 `search_enterprise_knowledge`
@@ -186,5 +195,5 @@ ruff check .
 
 ---
 
-*最后更新：2026-05-16*
-*下次配置审查时间：2026-08-15（3个月后）*
+*最后更新：2026-08-01*
+*下次配置审查时间：2026-08-15*
