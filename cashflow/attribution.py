@@ -9,20 +9,25 @@ import pandas as pd
 from constants import ALIGN_SHARE, MONTH_END_DAYS
 
 
+def _agg(df: pd.DataFrame, by: list[str], name: str) -> pd.Series:
+    """聚合并保证空输入也带正确命名的(Multi)Index——否则 concat 后维度列名丢失。"""
+    if len(df):
+        return df.groupby(by)["amount"].sum().rename(name)
+    idx = (pd.MultiIndex.from_arrays([[] for _ in by], names=by) if len(by) > 1
+           else pd.Index([], name=by[0]))
+    return pd.Series([], index=idx, dtype=float, name=name)
+
+
 def contrib(cur: pd.DataFrame, prev: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     """按 by 维度聚合 cur/prev 金额，delta=cur-prev，按 |delta| 降序。
 
-    返回列: by + [cur, prev, delta]。空输入返回空表（列齐全）。
+    返回列: by + [cur, prev, delta]。任一侧为空照常工作（如某币种仅上月出现）。
     """
-    c = cur.groupby(by)["amount"].sum().rename("cur") if len(cur) else pd.Series(name="cur", dtype=float)
-    p = prev.groupby(by)["amount"].sum().rename("prev") if len(prev) else pd.Series(name="prev", dtype=float)
-    df = pd.concat([c, p], axis=1).fillna(0.0)
+    df = pd.concat([_agg(cur, by, "cur"), _agg(prev, by, "prev")], axis=1).fillna(0.0)
     if df.empty:
         return pd.DataFrame(columns=[*by, "cur", "prev", "delta"])
     df["delta"] = df["cur"] - df["prev"]
     df = df.reset_index()
-    if len(by) == 1:  # concat 单键时 index 无名
-        df = df.rename(columns={"index": by[0]})
     return df.sort_values("delta", key=lambda s: s.abs(), ascending=False).reset_index(drop=True)
 
 
