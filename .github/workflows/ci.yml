@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pandas numpy pyyaml tabulate openpyxl pytest ruff
+        run: pip install pandas numpy pyyaml tabulate openpyxl pytest ruff fastapi httpx uvicorn
       - name: Ruff
         run: ruff check cashflow tests/cashflow
       - name: Tests
