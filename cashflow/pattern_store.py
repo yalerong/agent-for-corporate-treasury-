@@ -3,7 +3,7 @@
 schema v2（meta.schema_version: 2）:
   status: candidate（重算自动产生）| approved（人工批准，strict 门控下才进计算）
         | refuted（人工否决，重算保持不复活，防重提）
-  approved 为过渡期派生字段（= status=="approved"），PR3 删除。
+  v1 的 approved 布尔仅在读入时映射为 status，写盘不再保留（PR3 起删除）。
 
 自动重算永不改人工状态：按 id 从老库继承 STATE_FIELDS；未被重算命中的
 refuted / llm 来源条目留存（防重提、防外源丢失）。
@@ -25,7 +25,7 @@ STATE_FIELDS = ("status", "source", "valid_from", "approved_by", "approved_at",
                 "refuted_reason", "superseded_by")
 _HEAD = ("id", "type", "key", "claim")
 _TAIL = ("confidence", "status", "source", "valid_from", "approved_by", "approved_at",
-         "refuted_reason", "superseded_by", "evidence", "approved")
+         "refuted_reason", "superseded_by", "evidence")
 
 
 def pattern_id(type_: str, key: dict) -> str:
@@ -43,6 +43,11 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def status_of(p: dict) -> str:
+    """三态状态：v2 读 status；未迁移的 v1 字典按 approved 布尔映射，调用方不因此崩。"""
+    return p.get("status") or ("approved" if p.get("approved") else "candidate")
+
+
 def upgrade_pattern(p: dict) -> dict:
     """单条补齐 v2 字段（v1 的 approved:true → status=approved）。幂等，不丢已有字段。"""
     q = dict(p)
@@ -53,7 +58,7 @@ def upgrade_pattern(p: dict) -> dict:
     for f in ("valid_from", "approved_by", "approved_at", "refuted_reason", "superseded_by"):
         q.setdefault(f, None)
     q.setdefault("evidence", {})
-    q["approved"] = q["status"] == "approved"  # 过渡派生字段，PR3 删
+    q.pop("approved", None)  # v1 布尔仅用于映射 status，不再写盘
     return q
 
 
@@ -123,7 +128,6 @@ def merge_states(new_pats: list[dict], old_doc: dict | None,
             for f in STATE_FIELDS:
                 q[f] = old.get(f)
             q["evidence"] = old.get("evidence") or {}
-            q["approved"] = q["status"] == "approved"
         if not q.get("valid_from"):
             q["valid_from"] = default_valid_from
         out.append(q)

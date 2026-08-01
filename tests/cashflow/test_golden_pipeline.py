@@ -129,7 +129,6 @@ def test_approved_survives_rerun(pipeline_root):
     adp = by_key(pats2, "recurring", payee="ADP Payroll", currency="USD")
     assert adp["status"] == "approved"
     assert adp["approved_by"] == "tester"
-    assert adp["approved"] is True  # 过渡派生字段与 status 一致
+    assert "approved" not in adp  # v1 过渡布尔已删，状态只看 status
     landlord = by_key(pats2, "recurring", payee="Landlord Ltd", currency="USD")
     assert landlord["status"] == "candidate"
-    assert landlord["approved"] is False

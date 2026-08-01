@@ -80,7 +80,7 @@ def test_migrate_v1_maps_status_and_is_idempotent():
         x = find(doc, "recurring", payee="X", currency="USD")
         assert x["status"] == "approved"
         assert x["approved_by"] == "v1-migration"
-        assert x["approved"] is True
+        assert "approved" not in x  # v1 布尔只映射 status，不再写盘
         a = find(doc, "weekly_level", entity="A", project="P", currency="USD")
         assert a["status"] == "candidate"
         assert all(p["valid_from"] == "2026-06-30" for p in doc["patterns"])
@@ -110,7 +110,6 @@ def test_v1_approved_survives_patterns_rerun_without_migrate(iso_root):
     assert doc2["meta"]["schema_version"] == 2
     adp = find(doc2, "recurring", payee="ADP Payroll", currency="USD")
     assert adp["status"] == "approved"
-    assert adp["approved"] is True
 
 
 # ---------- 审批 CLI ----------
@@ -133,7 +132,6 @@ def test_approve_all_high_then_refute_sticks(iso_root):
     adp = find(load_doc(iso_root), "recurring", payee="ADP Payroll", currency="USD")
     assert adp["status"] == "refuted"
     assert "测试否决" in adp["refuted_reason"]
-    assert adp["approved"] is False
 
 
 def test_refuted_excluded_from_forecast(iso_root):
@@ -171,3 +169,12 @@ def test_strict_gating_transition_and_effective(iso_root):
     rep = report(iso_root)
     assert "| CNY | 140,000 | 0 | 140,000 | 富余 |" in rep
     assert "未来4周购汇需求" not in rep
+
+
+def test_no_strict_escape_hatch(iso_root):
+    """--no-strict-approval 逃生口：不进 strict 也不打过渡标注，纯置信度口径。"""
+    run_script("engine.py", iso_root, "--no-strict-approval")
+    rep = report(iso_root)
+    assert "门控" not in rep
+    assert "过渡模式" not in rep
+    assert "**CNY**: 未来4周购汇需求 11,880" in rep

@@ -1,0 +1,27 @@
+# 指标口径登记处：报告中的每个口径在此唯一登记，id 与 metrics.py 的 REGISTRY 一一对应。
+# 只做登记与口径说明，不做计算 DSL；计算是 metrics.py 里按 id 注册的纯函数。
+metrics:
+  - id: budget_variance
+    name: 预算执行差异
+    unit: 原币
+    desc: 预算（周付款预测）vs 可比口径实际（流水性质=流程支出且剔除 BUDGET_EXCLUDE 内部资金移动），按月对比；聚合预算按币种、明细预算按主体×项目×币种，|差异|>10% 给 Top 收款方根因。
+  - id: forecast_4w
+    name: 未来4周资金预测
+    unit: 原币/周
+    desc: weekly_level 周度基准（稀疏周补零、recurring 剔除防重复计数）+ recurring 固定日提醒；refuted 规律不进任何预测行；provisional 行仅提示不进计算。
+  - id: position
+    name: 头寸与调拨建议
+    unit: 原币
+    desc: 币种余额（as_of<=报告日的最新快照，防前视）− 计算口径预测流出 → 缺口/富余；主体级余缺同币种贪心互补出 preview-only 调拨建议（扣减捐出方额度），残余明示转外汇节。
+  - id: fx_advice
+    name: 外汇交易管控建议
+    unit: 原币
+    desc: 有余额数据时购汇建议只针对余额覆盖不了的缺口（可覆盖币种明示无需购汇），无余额数据退回全额口径；建议区间 [0.8x, min(1.1x, 预算上限)]，期限≤4周，风险中性。
+  - id: related_party
+    name: 关联方资金往来
+    unit: 原币
+    desc: 关联方=收款方名单 ∪ 实质分类关键词（related_parties.yaml，人工维护）；当月分分类×币种逐笔可追溯 + 近4月趋势。
+  - id: approvals_profile
+    name: 审批流程画像
+    unit: 单/小时
+    desc: 四类申请（调拨/付款/报销/非公户）单量、同意率、审批耗时中位数、月均单量、性质分布 Top3 与耗时 Top3（approvals 表存在时输出）。
