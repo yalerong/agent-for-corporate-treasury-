@@ -125,6 +125,17 @@ def test_contrib_manual():
     assert list(out["cur"]) == [100.0, 50.0, 0.0]
 
 
+def test_contrib_one_side_empty():
+    """某维度切片只在单月出现时（另一侧空表），列名不得丢失——真数据回归。"""
+    prev = pay_df([("2026-06-01", "A", "P", "AUD", "甲", 40.0)])
+    out = attribution.contrib(empty_pay(), prev, ["entity", "project", "payee"])
+    assert list(out.columns) == ["entity", "project", "payee", "cur", "prev", "delta"]
+    assert list(out["delta"]) == [-40.0]
+    out2 = attribution.contrib(prev, empty_pay(), ["payee"])
+    assert list(out2["payee"]) == ["甲"]
+    assert list(out2["delta"]) == [40.0]
+
+
 def test_calendar_align():
     aligned = pay_df([("2026-07-15", "A", "P", "USD", "X", 90.0),
                       ("2026-07-03", "A", "P", "USD", "X", 10.0)])
