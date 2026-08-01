@@ -8,13 +8,14 @@
 每条规律带证据(样本周数/变异系数)与置信度:
   high        样本>=8周 且 变异系数<0.5   -> 可进 engine 计算
   provisional 其余                        -> 只作提示，不进计算
-人工批准机制: patterns.yaml 里 approved: false 的 high 规律，engine 会用但标注"待批"。
+人工审批(schema v2 三态): status=candidate/approved/refuted，用 approve.py 批准/否决;
+重算按 pattern_id 继承人工状态(refuted 不复活)。strict 门控见 engine.py --strict-approval。
 """
 import sqlite3
 from datetime import UTC, datetime
 
 import pandas as pd
-import yaml
+import pattern_store
 from constants import GROUP, get_root
 
 ROOT = get_root()
@@ -54,7 +55,7 @@ def weekly_level(df: pd.DataFrame) -> list[dict]:
             "claim": f"周度付款基准 {base:,.0f}（{n}周样本, CV={cv:.2f}, 近4周/前4周={trend:.2f}）",
             "base_weekly": round(base, 2), "cv": round(cv, 2),
             "trend": round(trend, 2), "sample_weeks": n,
-            "confidence": conf, "approved": False,
+            "confidence": conf,
         })
     return out
 
@@ -77,7 +78,6 @@ def recurring(df: pd.DataFrame) -> list[dict]:
                     "avg_amount": round(float(g["amount"].mean()), 2),
                     "sample_n": len(g),
                     "confidence": "high" if len(g) >= 5 else "provisional",
-                    "approved": False,
                 })
     return out
 
@@ -97,7 +97,7 @@ def dom_profile(df: pd.DataFrame) -> list[dict]:
                 "key": {"entity": ent, "currency": cur},
                 "claim": f"月内付款集中日: {days}",
                 "hot_days": {int(d): round(float(p), 3) for d, p in hot.items()},
-                "confidence": "provisional", "approved": False,
+                "confidence": "provisional",
             })
     return out
 
@@ -113,20 +113,15 @@ def main():
         "data_range": [str(df["date"].min().date()), str(df["date"].max().date())],
         "rows": len(df),
     }
-    # 保留人工已批准状态
-    if OUT.exists():
-        old = yaml.safe_load(OUT.read_text(encoding="utf-8")) or {}
-        approved = {str(p["key"]) + p["type"]: p.get("approved", False)
-                    for p in old.get("patterns", [])}
-        for p in pats:
-            p["approved"] = approved.get(str(p["key"]) + p["type"], False)
-    OUT.parent.mkdir(exist_ok=True)
-    OUT.write_text(yaml.dump({"meta": meta, "patterns": pats},
-                             allow_unicode=True, sort_keys=False), encoding="utf-8")
+    # 人工状态(approved/refuted/审计字段)按 pattern_id 从老库继承——自动重算永不改人工状态
+    old = pattern_store.load(OUT) if OUT.exists() else None
+    pats = pattern_store.merge_states(pats, old, default_valid_from=meta["data_range"][1])
+    pattern_store.save(OUT, {"meta": meta, "patterns": pats})
     hi = sum(1 for p in pats if p["confidence"] == "high")
     print(f"提炼规律 {len(pats)} 条（high {hi} / provisional {len(pats)-hi}）→ {OUT}")
     for p in pats:
-        print(f"  [{p['confidence']:<11}] {p['type']:<12} {p['key']} :: {p['claim']}")
+        print(f"  [{p['confidence']:<11}] [{p.get('status', 'candidate'):<9}] "
+              f"{p['type']:<12} {p['key']} :: {p['claim']}")
 
 
 if __name__ == "__main__":
