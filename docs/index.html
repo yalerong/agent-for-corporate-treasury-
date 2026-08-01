@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Corporate Treasury Agent · 会自己总结规律的资金智能体</title>
+<style>
+:root{
+  --bg:#EFECE3; --surface:#FAF8F2; --surface-2:#F3F0E6;
+  --side-bg:#2B2823; --side-line:rgba(255,255,255,.09);
+  --line:#E2DECF; --line-soft:#EBE7DA; --line-strong:#D2CCBA;
+  --text:#2A271F; --muted:#6E6855; --subtle:#98917E;
+  --coral:#C15F3C; --coral-bright:#DC8159; --coral-soft:rgba(193,95,60,.10);
+  --green:#3F7D55; --green-soft:rgba(63,125,85,.12);
+  --red:#BE4A3A; --red-soft:rgba(190,74,58,.10);
+  --amber:#B7842F; --amber-soft:rgba(183,132,47,.12);
+  --slate:#5E7287; --slate-soft:rgba(94,114,135,.12);
+  --mono:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;
+  background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+  background-size:48px 48px;background-position:-1px -1px}
+::selection{background:rgba(193,95,60,.20)}
+.app{min-height:100vh;display:grid;grid-template-columns:236px minmax(0,1fr)}
+.sidebar{position:sticky;top:0;height:100vh;background:var(--side-bg);
+  border-right:1px solid #3a352d;display:flex;flex-direction:column}
+.brand{padding:18px 16px 14px;border-bottom:1px solid var(--side-line)}
+.brand h1{font-size:13px;margin:0;font-weight:700;letter-spacing:2.5px;font-family:var(--mono);color:#F3EFE4}
+.brand p{margin:6px 0 0;font-size:9.5px;color:#9C9079;letter-spacing:1.5px;font-family:var(--mono)}
+.brand .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--coral-bright);
+  margin-right:7px;box-shadow:0 0 0 0 rgba(220,129,89,.5);animation:pulse 2.4s infinite;vertical-align:middle}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,129,89,.5)}70%{box-shadow:0 0 0 7px rgba(220,129,89,0)}
+  100%{box-shadow:0 0 0 0 rgba(220,129,89,0)}}
+.nav{display:flex;flex-direction:column;padding:10px 8px;gap:1px}
+.nav button{border:0;background:transparent;color:#B6AE9B;min-height:40px;padding:0 10px 0 12px;
+  display:grid;grid-template-columns:18px 1fr auto;gap:11px;align-items:center;text-align:left;
+  cursor:pointer;font-size:12.5px;font-family:var(--sans);border-left:2px solid transparent;
+  transition:background .12s,color .12s}
+.nav button:hover{background:rgba(255,255,255,.04);color:#ECE5D6}
+.nav button.active{background:linear-gradient(90deg,rgba(220,129,89,.16),transparent);
+  color:#F6F0E4;border-left-color:var(--coral-bright)}
+.nav .ico{font-size:15px;text-align:center;color:#8A8270}
+.nav button.active .ico{color:var(--coral-bright)}
+.nav small{color:#827A68;font-size:9.5px;font-family:var(--mono);letter-spacing:.5px;
+  border:1px solid var(--side-line);padding:1px 5px;border-radius:2px}
+.nav button.active small{color:var(--coral-bright);border-color:rgba(220,129,89,.4)}
+.side-status{margin:auto 12px 14px;border:1px solid var(--side-line);
+  background:rgba(255,255,255,.04);padding:11px 12px}
+.side-status .t{font-size:10px;font-weight:700;color:#ECE5D6;font-family:var(--mono);letter-spacing:.6px}
+.side-status .d{font-size:10.5px;color:#9C9079;margin-top:8px;line-height:1.75;font-family:var(--mono)}
+.side-status .d b{color:var(--coral-bright)}
+.side-status .ok{margin-top:10px;font-size:10px;font-weight:600;color:#8FCBA6;
+  background:rgba(63,125,85,.20);border:1px solid rgba(63,125,85,.32);padding:4px 8px;
+  display:block;font-family:var(--mono);letter-spacing:.4px}
+.content{min-width:0}
+.topbar{height:58px;background:rgba(239,236,227,.86);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;
+  align-items:center;padding:0 22px;position:sticky;top:0;z-index:5}
+.topbar h1{font-size:16px;margin:0;font-weight:700}
+.topbar .tag{color:var(--muted);border:1px solid var(--line-strong);padding:4px 9px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.5px}
+.topbar .tag b{color:var(--amber)}
+.body{padding:20px 22px 40px;display:grid;gap:16px}
+.page{display:none;gap:16px;grid-template-columns:1fr}
+.page.active{display:grid;animation:fade .25s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.hero{background:linear-gradient(135deg,var(--surface-2),var(--surface));border:1px solid var(--line);
+  border-left:3px solid var(--coral);padding:22px 24px;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-40px;top:-40px;width:180px;height:180px;
+  background:radial-gradient(circle,rgba(193,95,60,.10),transparent 70%);pointer-events:none}
+.hero h2{margin:0 0 9px;font-size:16px;font-weight:700}
+.hero p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.8;max-width:760px}
+.hero .chips{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+.hero .chip{background:rgba(193,95,60,.06);border:1px solid var(--line-strong);color:var(--muted);
+  padding:4px 11px;font-size:10.5px;font-family:var(--mono);letter-spacing:.4px}
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line)}
+.kpi{background:var(--surface);padding:13px 15px}
+.kpi .k{font-size:10px;color:var(--subtle);letter-spacing:1px;font-family:var(--mono);text-transform:uppercase}
+.kpi .v{font-size:24px;font-weight:600;margin-top:8px;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .v.g{color:var(--green)}.kpi .v.r{color:var(--red)}.kpi .v.a{color:var(--amber)}
+.kpi .s{font-size:10.5px;margin-top:5px;color:var(--muted);font-family:var(--mono)}
+.panel{background:var(--surface);border:1px solid var(--line);overflow:hidden}
+.panel-head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:10px;flex-wrap:wrap;background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+.panel-title{font-size:12.5px;margin:0;font-weight:600;display:flex;align-items:center;gap:9px}
+.panel-title::before{content:"";width:3px;height:13px;background:var(--coral)}
+.panel-sub{color:var(--muted);font-size:10.5px;font-family:var(--mono)}
+.tagb{margin-left:auto;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.8px;
+  color:var(--coral);border:1px solid rgba(193,95,60,.32);background:var(--coral-soft);padding:3px 8px}
+.tagb::before{content:"[ "}.tagb::after{content:" ]"}
+.panel-body{padding:14px 16px 16px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)}
+th{text-align:left;color:var(--subtle);font-weight:600;font-size:9.5px;letter-spacing:.9px;
+  text-transform:uppercase;padding:9px 10px;border-bottom:1px solid var(--line-strong)}
+td{padding:8px 10px;border-bottom:1px solid var(--line-soft);font-variant-numeric:tabular-nums;vertical-align:top}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:rgba(193,95,60,.05)}
+code{color:var(--coral);font-family:var(--mono);font-size:11.5px}
+.badge{display:inline-block;padding:2px 8px;font-size:10px;font-weight:600;font-family:var(--mono);
+  border:1px solid transparent;white-space:nowrap}
+.b-approved{background:var(--green-soft);color:var(--green);border-color:rgba(63,125,85,.28)}
+.b-refuted{background:var(--red-soft);color:var(--red);border-color:rgba(190,74,58,.28)}
+.b-candidate{background:var(--slate-soft);color:var(--slate);border-color:rgba(94,114,135,.28)}
+.b-high{background:var(--amber-soft);color:var(--amber);border-color:rgba(183,132,47,.34)}
+.b-provisional{background:#f0eee6;color:var(--subtle);border-color:var(--line-strong)}
+.chain{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
+.chain-node{flex:1 1 0;min-width:170px;border:1px solid var(--line-strong);background:var(--surface-2);
+  padding:12px 14px}
+.chain-node b{font-family:var(--mono);font-size:12px;display:block;color:var(--coral)}
+.chain-node span{font-size:11.5px;color:var(--muted);line-height:1.7;display:block;margin-top:6px}
+.chain-arrow{align-self:center;color:var(--subtle);font-size:16px}
+.note{background:var(--amber-soft);border:1px solid rgba(183,132,47,.26);border-left:3px solid var(--amber);
+  padding:12px 16px;color:#6F571F;font-size:12.5px;line-height:1.8}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.card{border:1px solid var(--line);background:var(--surface);padding:14px 16px}
+.card b{font-family:var(--mono);font-size:12px;color:var(--coral);letter-spacing:.5px}
+.card p{margin:8px 0 0;color:var(--muted);font-size:12px;line-height:1.8}
+.report h1{font-size:18px;margin:4px 0 10px}
+.report h2{font-size:13.5px;font-weight:700;margin:26px 0 10px;padding-left:9px;border-left:3px solid var(--coral)}
+.report blockquote{border-left:3px solid var(--line-strong);margin:8px 0;padding:6px 12px;
+  color:var(--muted);background:var(--surface-2);font-size:12.5px}
+.report ul{margin:8px 0;padding-left:20px}
+.report li{margin:3px 0;line-height:1.7}
+.report li.sub{margin-left:20px;list-style:circle}
+.report hr{border:0;border-top:1px solid var(--line-strong);margin:18px 0}
+.report p{line-height:1.7}
+.muted{color:var(--subtle);font-size:11px;font-family:var(--mono)}
+@media (max-width:860px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand"><h1><span class="dot"></span>TREASURY AGENT</h1>
+    <p>LLM 总结规律 · 代码执行规律</p></div>
+  <nav class="nav" id="nav">
+    <button data-p="overview" class="active"><span class="ico">◈</span><span>总览</span><small>OVERVIEW</small></button>
+    <button data-p="patterns"><span class="ico">⚖</span><span>规律库</span><small id="n-pat">—</small></button>
+    <button data-p="report"><span class="ico">📄</span><span>示例报告</span><small>8 节</small></button>
+    <button data-p="governance"><span class="ico">🛡</span><span>治理机制</span><small>GATE</small></button>
+  </nav>
+  <div class="side-status"><div class="t">SYNTHETIC DEMO</div>
+    <div class="d" id="side-meta">固定种子合成数据<br>与真实业务无关</div>
+    <span class="ok">✓ DETERMINISTIC ENGINE</span></div>
+</aside>
+<div class="content">
+  <div class="topbar"><h1 id="page-title">总览</h1>
+    <span class="tag">approved 才进计算 · <b>strict 门控默认开</b> · 每个数字带 lineage</span></div>
+  <div class="body">
+
+  <section class="page active" id="p-overview">
+    <div class="hero"><h2>一个会自己获取数据、自己总结规律的资金管理智能体</h2>
+      <p>把付款流水喂给它，它自动提炼发薪日、固定付款、周度基准等业务规律，产出预算差异、
+      异动归因、滚动预测、头寸调拨、外汇管控、关联方、审批画像、规律核验八份决策材料。
+      核心哲学：<b>LLM 总结规律，代码执行规律</b>——报告里每个数字都来自确定性引擎，
+      按指标登记 + 数值血缘可追溯、可重放；LLM 只见聚合摘要、产出只进候选池、永不直接给数字。</p>
+      <div class="chips"><span class="chip">SQLite + 幂等入库</span><span class="chip">三态规律库 schema v2</span>
+      <span class="chip">strict 审批门控</span><span class="chip">核验环 + 自动降级</span>
+      <span class="chip">LLM 三重闸</span><span class="chip">lineage 血缘</span>
+      <span class="chip">golden 回归网 + CI</span></div></div>
+    <div class="kpis" id="kpi-overview"></div>
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">三个自主环</h2>
+      <span class="panel-sub">ingest → patterns/validate → engine</span><span class="tagb">PIPELINE</span></div>
+      <div class="panel-body"><div class="chain">
+        <div class="chain-node"><b>① 感知环</b><span>导出标准化入库 SQLite，幂等可重跑，
+          带来源文件与行哈希；余额支持 Excel 导入与接口直取双路径。</span></div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node"><b>② 学习环</b><span>统计提炼三类规律（周度基准/固定节奏/日历集中日），
+          每条带样本量、变异系数、置信度与 pattern_id；核验环用最近付款回测，连续失败自动降级。</span></div>
+        <div class="chain-arrow">→</div>
+        <div class="chain-node"><b>③ 行动环</b><span>八节报告 + forecast.csv + lineage.json；
+          调拨建议 preview-only；自主权滑块把每条预测标注 auto / flag / require_human——只标注不拦截。</span></div>
+      </div></div></div>
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">八份决策材料</h2>
+      <span class="panel-sub">每节标 metric_id · 血缘落 lineage.json</span></div>
+      <div class="panel-body"><table><thead><tr><th>输出</th><th>回答的问题</th><th>机制</th></tr></thead><tbody>
+      <tr><td>预算执行差异</td><td>哪里超支/结余，根因是谁</td><td>可比口径对比，差异&gt;10% 用环比贡献定位</td></tr>
+      <tr><td>当月异动归因</td><td>钱为什么多了/少了</td><td>contrib 分解 + 日历对齐打"预期内"砍误报</td></tr>
+      <tr><td>滚动资金预测</td><td>未来 4 周要付多少</td><td>周度基准 + 固定日排期，双轨不重复计数</td></tr>
+      <tr><td>头寸与调拨建议</td><td>缺口在哪、先从哪调</td><td>余额−预测流出→主体级贪心互补（preview-only）</td></tr>
+      <tr><td>外汇交易管控</td><td>该换多少汇、什么期限</td><td>只对余额盖不住的缺口给区间，上限钉预算</td></tr>
+      <tr><td>关联方合规</td><td>往来是否透明可追溯</td><td>名单+关键词匹配，逐笔可追溯</td></tr>
+      <tr><td>审批流程画像</td><td>单据流转多快、瓶颈在哪</td><td>同意率/耗时中位数/性质分布/耗时 Top</td></tr>
+      <tr><td>规律核验</td><td>哪些规律过期了、该信谁</td><td>三态证据回测，违反=人审清单，连败自动降级</td></tr>
+      </tbody></table></div></div>
+    <div class="note" id="demo-note"><b>示例数据说明：</b>加载中…</div>
+  </section>
+
+  <section class="page" id="p-patterns">
+    <div class="kpis" id="kpi-patterns"></div>
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">三态规律库</h2>
+      <span class="panel-sub" id="pat-sub">—</span><span class="tagb">HUMAN GATE</span></div>
+      <div class="panel-body"><table><thead><tr><th>id</th><th>状态</th><th>置信度</th><th>类型</th>
+      <th>key</th><th>claim</th><th>核验</th></tr></thead><tbody id="pat-rows"></tbody></table></div></div>
+  </section>
+
+  <section class="page" id="p-report">
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">确定性引擎报告（合成数据）</h2>
+      <span class="panel-sub">strict 门控开启 · 8 节 · 尾注钉规律库版本</span><span class="tagb">AUDITABLE</span></div>
+      <div class="panel-body report" id="report-body">加载中…</div></div>
+  </section>
+
+  <section class="page" id="p-governance">
+    <div class="cards">
+      <div class="card"><b>三态规律库</b><p>规律重算只产生 candidate；人工批准（approved）才进计算——
+        strict 门控默认开，approved=0 时回退置信度口径并明示"过渡模式"；refuted 只能人为，
+        重算永不复活（防重提）。审批走非交互 CLI 或本地审批台 UI，写盘前自动备份。</p></div>
+      <div class="card"><b>核验环 + 自动降级</b><p>每条规律用最近付款回测：预期日 ±3 天找付款、
+        金额 ±40% 内为 hit，缺失或出带为 violated，数据边缘为 uncertain。违反进人审清单；
+        连续 2 次 hit_rate&lt;0.5 的 approved 自动降级回 candidate——自动路径永不置 refuted。</p></div>
+      <div class="card"><b>LLM 三重闸</b><p>LLM 只见聚合 profile（周统计量/日历直方图/Top收款方聚合额），
+        绝不见单笔流水；产出必须带可复算 checks——① schema 校验 ② 数字与 profile 复算偏差&gt;5% 拒收
+        ③ pattern_id 去重。通过者只进候选池，走同一条人工审批通道；无 API Key 全流程照常。</p></div>
+      <div class="card"><b>安全红线</b><p>付款执行永远不给 Agent 工具——安全靠工具不存在，不靠 Prompt。
+        调拨建议 preview-only；自主权滑块按金额/关键词分档标注人审档，只标注不拦截；
+        真实数据全部 gitignore，仓库只含代码与合成示例。</p></div>
+    </div>
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">核验结果（合成数据实跑）</h2>
+      <span class="panel-sub" id="val-sub">—</span><span class="tagb">EVIDENCE</span></div>
+      <div class="panel-body"><table><thead><tr><th>id</th><th>key</th><th>claim</th>
+      <th>hit / miss</th><th>hit_rate</th><th>状态</th></tr></thead><tbody id="val-rows"></tbody></table>
+      <p class="muted" style="margin:10px 0 0">违反明细即人审清单：违反不自动否决，refuted 只能人为。</p></div></div>
+  </section>
+
+  </div>
+</div>
+</div>
+<script>
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const badge = (v, cls) => `<span class="badge b-${cls}">${esc(v)}</span>`;
+const kpi = (k, v, cls, s) =>
+  `<div class="kpi"><div class="k">${k}</div><div class="v ${cls||""}">${v}</div><div class="s">${s}</div></div>`;
+
+document.getElementById("nav").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("active", b === btn));
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.getElementById("p-" + btn.dataset.p).classList.add("active");
+  document.getElementById("page-title").textContent = btn.querySelector("span:nth-child(2)").textContent;
+});
+
+fetch("data.json").then(r => r.json()).then(d => {
+  const K = d.kpis;
+  document.getElementById("n-pat").textContent = K.patterns;
+  document.getElementById("demo-note").innerHTML = "<b>示例数据说明：</b>" + esc(d.note) +
+    " 数据范围 " + esc(d.meta.data_range.join(" ~ ")) + "，共 " + K.payments + " 笔合成付款。";
+  document.getElementById("side-meta").innerHTML =
+    "付款 <b>" + K.payments + "</b> 笔 · 规律 <b>" + K.patterns + "</b> 条<br>范围 " +
+    esc(d.meta.data_range.join(" ~ "));
+  document.getElementById("kpi-overview").innerHTML =
+    kpi("合成付款", K.payments, "", "笔 · 幂等入库") +
+    kpi("学到规律", K.patterns, "", "无人工标注") +
+    kpi("APPROVED", K.approved, "g", "人工批准进计算") +
+    kpi("预测行", K.forecast_rows, "", "未来 4 周") +
+    kpi("REQUIRE HUMAN", K.require_human, "r", "滑块标注人审");
+  document.getElementById("kpi-patterns").innerHTML =
+    kpi("规律总数", K.patterns, "", "patterns.yaml") +
+    kpi("APPROVED", K.approved, "g", "进计算口径") +
+    kpi("CANDIDATE", K.candidate, "", "待人工审批") +
+    kpi("已核验", K.checked, "a", "hit / violated / uncertain") +
+    kpi("VIOLATED", K.violated, "r", "进人审清单");
+  document.getElementById("pat-sub").textContent = "共 " + K.patterns + " 条 · 全部由统计引擎自动提炼";
+  document.getElementById("pat-rows").innerHTML = d.patterns.map(p => {
+    const ev = p.evidence && p.evidence.last_validated
+      ? `hit ${p.evidence.hits}/miss ${p.evidence.misses}` : "—";
+    return `<tr><td><code>${esc(p.id)}</code></td><td>${badge(p.status, p.status)}</td>` +
+      `<td>${badge(p.confidence, p.confidence)}</td><td>${esc(p.type)}</td>` +
+      `<td>${esc(Object.values(p.key).join(", "))}</td>` +
+      `<td style="font-family:var(--sans)">${esc(p.claim)}</td><td class="muted">${ev}</td></tr>`;
+  }).join("");
+  document.getElementById("report-body").innerHTML = d.report_html;
+  const vio = d.patterns.filter(p => p.evidence && p.evidence.last_validated && p.evidence.misses > 0);
+  document.getElementById("val-sub").textContent =
+    "核验 " + K.checked + " 条 · 违反 " + K.violated + " 条（合成数据里真实抓到的断缴样例）";
+  document.getElementById("val-rows").innerHTML = vio.map(p =>
+    `<tr><td><code>${esc(p.id)}</code></td><td>${esc(Object.values(p.key).join(", "))}</td>` +
+    `<td style="font-family:var(--sans)">${esc(p.claim)}</td>` +
+    `<td>${p.evidence.hits} / ${p.evidence.misses}</td><td>${p.evidence.hit_rate}</td>` +
+    `<td>${badge(p.status, p.status)}</td></tr>`).join("") ||
+    `<tr><td colspan="6" class="muted">本轮核验全部通过</td></tr>`;
+}).catch(e => {
+  document.getElementById("demo-note").innerHTML =
+    "<b>data.json 加载失败：</b>请通过 HTTP 访问（如 python -m http.server），或先跑 " +
+    "<code>python cashflow/export_demo.py</code> 生成数据。" + esc(e);
+});
+</script>
+</body>
+</html>

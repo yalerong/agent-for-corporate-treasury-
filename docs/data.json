@@ -1,0 +1,516 @@
+{
+ "note": "本页全部数字来自固定种子的合成示例数据（make_sample.py），与任何真实业务无关。",
+ "meta": {
+  "schema_version": 2,
+  "generated_at": "2026-08-01T03:59:11+00:00",
+  "data_range": [
+   "2026-01-02",
+   "2026-07-30"
+  ],
+  "rows": 245
+ },
+ "kpis": {
+  "payments": 245,
+  "patterns": 12,
+  "high": 4,
+  "approved": 4,
+  "candidate": 8,
+  "refuted": 0,
+  "forecast_rows": 17,
+  "require_human": 1,
+  "checked": 4,
+  "violated": 1
+ },
+ "patterns": [
+  {
+   "id": "4eaa7c98842a",
+   "type": "weekly_level",
+   "key": {
+    "entity": "HK Co",
+    "project": "运营",
+    "currency": "USD"
+   },
+   "claim": "周度付款基准 23,035（31周样本, CV=0.54, 近4周/前4周=1.07）",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "88a1ec3e3398",
+   "type": "weekly_level",
+   "key": {
+    "entity": "SG Co",
+    "project": "营销",
+    "currency": "SGD"
+   },
+   "claim": "周度付款基准 6,292（31周样本, CV=0.69, 近4周/前4周=1.03）",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "95995dcf0bd0",
+   "type": "weekly_level",
+   "key": {
+    "entity": "SG Co",
+    "project": "运营",
+    "currency": "SGD"
+   },
+   "claim": "周度付款基准 10,758（31周样本, CV=0.63, 近4周/前4周=1.17）",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "c001aa3b1e60",
+   "type": "recurring",
+   "key": {
+    "payee": "ADP Payroll",
+    "currency": "USD"
+   },
+   "claim": "月度固定付款, 约每月15日, 均额 118,670（7笔/7月）",
+   "status": "approved",
+   "confidence": "high",
+   "evidence": {
+    "checked_range": [
+     "2026-05-21",
+     "2026-07-30"
+    ],
+    "hits": 2,
+    "misses": 0,
+    "uncertain": 0,
+    "hit_rate": 1.0,
+    "last_validated": "2026-08-01T03:59:11+00:00",
+    "fail_streak": 0
+   }
+  },
+  {
+   "id": "df2f2e1fde78",
+   "type": "recurring",
+   "key": {
+    "payee": "IRAS",
+    "currency": "SGD"
+   },
+   "claim": "月度固定付款, 约每月20日, 均额 88,226（3笔/3月）",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "9d263319118f",
+   "type": "recurring",
+   "key": {
+    "payee": "Landlord Ltd",
+    "currency": "USD"
+   },
+   "claim": "月度固定付款, 约每月5日, 均额 18,000（7笔/7月）",
+   "status": "approved",
+   "confidence": "high",
+   "evidence": {
+    "checked_range": [
+     "2026-05-21",
+     "2026-07-30"
+    ],
+    "hits": 2,
+    "misses": 0,
+    "uncertain": 0,
+    "hit_rate": 1.0,
+    "last_validated": "2026-08-01T03:59:11+00:00",
+    "fail_streak": 0
+   }
+  },
+  {
+   "id": "474597ec5da2",
+   "type": "recurring",
+   "key": {
+    "payee": "Vendor-4",
+    "currency": "USD"
+   },
+   "claim": "月度固定付款, 约每月16日, 均额 11,817（6笔/4月）",
+   "status": "approved",
+   "confidence": "high",
+   "evidence": {
+    "checked_range": [
+     "2026-05-21",
+     "2026-07-30"
+    ],
+    "hits": 0,
+    "misses": 2,
+    "uncertain": 0,
+    "hit_rate": 0.0,
+    "last_validated": "2026-08-01T03:59:11+00:00",
+    "fail_streak": 1
+   }
+  },
+  {
+   "id": "f8798fedaaa5",
+   "type": "recurring",
+   "key": {
+    "payee": "母公司(关联方)",
+    "currency": "USD"
+   },
+   "claim": "月度固定付款, 约每月28日, 均额 211,075（4笔/4月）",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "cc2f5a9ad857",
+   "type": "recurring",
+   "key": {
+    "payee": "深圳子公司(关联方)",
+    "currency": "CNY"
+   },
+   "claim": "月度固定付款, 约每月10日, 均额 151,880（7笔/7月）",
+   "status": "approved",
+   "confidence": "high",
+   "evidence": {
+    "checked_range": [
+     "2026-05-21",
+     "2026-07-30"
+    ],
+    "hits": 2,
+    "misses": 0,
+    "uncertain": 0,
+    "hit_rate": 1.0,
+    "last_validated": "2026-08-01T03:59:11+00:00",
+    "fail_streak": 0
+   }
+  },
+  {
+   "id": "6a27708d8fe2",
+   "type": "dom_profile",
+   "key": {
+    "entity": "HK Co",
+    "currency": "USD"
+   },
+   "claim": "月内付款集中日: 15日(30%)",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "efb6c0d2a6a1",
+   "type": "dom_profile",
+   "key": {
+    "entity": "SG Co",
+    "currency": "CNY"
+   },
+   "claim": "月内付款集中日: 10日(100%)",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  },
+  {
+   "id": "defefdcf23d1",
+   "type": "dom_profile",
+   "key": {
+    "entity": "SG Co",
+    "currency": "SGD"
+   },
+   "claim": "月内付款集中日: 20日(30%)",
+   "status": "candidate",
+   "confidence": "provisional",
+   "evidence": {}
+  }
+ ],
+ "report_html": "<h1>资金月报与滚动预测 — 截至 2026-07-30</h1>\n<blockquote>数据: 245 笔付款 (2026-01-02 ~ 2026-07-30)；规律库版本 2026-08-01T03:59:11+00:00；全部数字由确定性引擎计算，可追溯。</blockquote>\n<blockquote>门控: strict-approval 开启，计算只用人工批准(approved)的规律。</blockquote>\n<h2>一、2026-07 预算执行差异 </h2>\n<table><tr><th>主体</th><th>项目</th><th>币种</th><th>预算</th><th>实际</th><th>差异%</th><th>差异根因(Top收款方)</th></tr><tr><td>SG Co</td><td>运营</td><td>CNY</td><td>127,700</td><td>139,154</td><td>9.0%</td><td></td></tr><tr><td>HK Co</td><td>运营</td><td>USD</td><td>291,600</td><td>268,013</td><td>-8.1%</td><td></td></tr><tr><td>SG Co</td><td>营销</td><td>SGD</td><td>70,500</td><td>61,408</td><td>-12.9% ⚠️</td><td>AdPlatform-2 35,240(环比-19,495); AdPlatform-1 16,693(环比-5,294)</td></tr><tr><td>SG Co</td><td>运营</td><td>SGD</td><td>173,200</td><td>150,066</td><td>-13.4% ⚠️</td><td>IRAS 83,911(环比+83,911); Vendor-SG-4 23,466(环比+13,532)</td></tr></table>\n<h2>二、当月异动归因（环比 2026-06） </h2>\n<ul>\n<li><b>USD</b>: 2026-07 流出 268,013（环比 -92,697）</li>\n<li class=\"sub\">HK Co/运营/Vendor-12: 2,437（环比 -62,420）</li>\n<li class=\"sub\">HK Co/运营/Vendor-8: 0（环比 -51,345）</li>\n<li class=\"sub\">HK Co/运营/Vendor-9: 0（环比 -51,214）</li>\n<li><b>SGD</b>: 2026-07 流出 211,473（环比 +80,043）</li>\n<li class=\"sub\">SG Co/运营/IRAS: 83,911（环比 +83,911）（预期内·日历对齐）</li>\n<li class=\"sub\">SG Co/营销/AdPlatform-2: 35,240（环比 -19,495）</li>\n<li class=\"sub\">SG Co/运营/Vendor-SG-4: 23,466（环比 +13,532）</li>\n<li><b>CNY</b>: 2026-07 流出 139,154（环比 -10,543）</li>\n<li class=\"sub\">SG Co/运营/深圳子公司(关联方): 139,154（环比 -10,543）（预期内·日历对齐）</li>\n</ul>\n<h2>三、未来4周资金预测（分主体/项目/币种） </h2>\n<table><tr><th></th><th>W+1</th><th>W+2</th><th>W+3</th><th>W+4</th></tr><tr><td>('HK Co', '运营', 'USD')</td><td>23,035</td><td>23,035</td><td>23,035</td><td>23,035</td></tr><tr><td>('SG Co', '运营', 'SGD')</td><td>10,758</td><td>10,758</td><td>10,758</td><td>10,758</td></tr><tr><td>('SG Co', '营销', 'SGD')</td><td>6,292</td><td>6,292</td><td>6,292</td><td>6,292</td></tr></table>\n<p><b>固定付款日提醒</b>：</p>\n<ul>\n<li>W+1(2026-07-31) Landlord Ltd ~18,000 USD（recurring@5日）</li>\n<li>W+2(2026-08-07) 深圳子公司(关联方) ~151,880 CNY（recurring@10日）</li>\n<li>W+3(2026-08-14) ADP Payroll ~118,670 USD（recurring@15日）</li>\n<li>W+3(2026-08-14) IRAS ~88,226 SGD（recurring@20日）</li>\n<li>W+3(2026-08-14) Vendor-4 ~11,817 USD（recurring@16日）</li>\n</ul>\n<h2>四、头寸与调拨建议（余额快照 2026-07-30） </h2>\n<table><tr><th>币种</th><th>余额(最新快照)</th><th>未来4周预测流出</th><th>头寸</th><th>状态</th></tr><tr><td>CNY</td><td>140,000</td><td>151,880</td><td>-11,880</td><td>⚠️ 缺口</td></tr><tr><td>SGD</td><td>260,000</td><td>0</td><td>260,000</td><td>富余</td></tr><tr><td>USD</td><td>380,000</td><td>148,487</td><td>231,513</td><td>富余</td></tr></table>\n<ul>\n<li><b>调拨建议（preview-only，不生成指令）</b>: HK Co → SG Co 80,000 CNY（SG Co 头寸缺口 91,880，HK Co 可用富余 80,000）</li>\n<li><b>SG Co/CNY</b> 同币种调拨后仍缺 11,880，需购汇/换汇覆盖（见外汇交易管控节）。</li>\n</ul>\n<h2>五、外汇交易管控建议 </h2>\n<ul>\n<li><b>CNY</b>: 未来4周购汇需求 11,880（预测流出 151,880，余额覆盖后缺口），预算额度上限 127,700。建议购汇/换汇区间 [9,504, 13,068]，期限与付款周期匹配（≤4周，忌超额超期）；风险中性，不做方向性判断。</li>\n<li><b>USD</b>: 未来4周预测流出 148,487，现有余额头寸可覆盖，无需购汇。</li>\n</ul>\n<h2>六、关联方资金往来 </h2>\n<ul>\n<li>2026-07 运营: 139,154 CNY（1笔），全部逐笔可追溯至源记录。</li>\n</ul>\n<p>近月趋势（金额，分类|币种）：</p>\n<table><tr><th>month</th><th>资金池</th><th>USD</th><th>运营</th><th>CNY</th></tr><tr><td>2026-04</td><td>nan</td><td>148,679</td></tr><tr><td>2026-05</td><td>263,761</td><td>158,206</td></tr><tr><td>2026-06</td><td>nan</td><td>149,697</td></tr><tr><td>2026-07</td><td>nan</td><td>139,154</td></tr></table>\n<h2>七、规律核验（人审清单） </h2>\n<ul>\n<li>核验 4 条（窗口 2026-05-21 ~ 2026-07-30）：无违反 3 / 违反 1</li>\n<li>⚠️ 违反明细（需人工复核；违反不自动否决，refuted 只能人为）：</li>\n<li class=\"sub\"><code>474597ec5da2</code> recurring {'payee': 'Vendor-4', 'currency': 'USD'} :: hit 0 / violated 2（hit_rate 0.0，当前 approved）</li>\n</ul>\n<hr>\n<p>*规律库: approved 4 / candidate 8（其中 high 待批 0）/ refuted 0；provisional 规律未参与计算；批准/否决用 approve.py。各节口径登记于 metrics.yaml，数值血缘见同目录 lineage.json。*</p>",
+ "forecast": [
+  {
+   "entity": "HK Co",
+   "project": "运营",
+   "currency": "USD",
+   "week": "W+1",
+   "start": "2026-07-31",
+   "forecast": 23035.05,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "4eaa7c98842a",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "营销",
+   "currency": "SGD",
+   "week": "W+1",
+   "start": "2026-07-31",
+   "forecast": 6291.51,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "88a1ec3e3398",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "运营",
+   "currency": "SGD",
+   "week": "W+1",
+   "start": "2026-07-31",
+   "forecast": 10758.35,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "95995dcf0bd0",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": NaN,
+   "project": NaN,
+   "currency": "USD",
+   "week": "W+1",
+   "start": "2026-07-31",
+   "forecast": 18000.0,
+   "source": "recurring@5日",
+   "confidence": "high",
+   "status": "approved",
+   "pattern_id": "9d263319118f",
+   "note": NaN,
+   "payee": "Landlord Ltd",
+   "review": "auto_report"
+  },
+  {
+   "entity": "HK Co",
+   "project": "运营",
+   "currency": "USD",
+   "week": "W+2",
+   "start": "2026-08-07",
+   "forecast": 23035.05,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "4eaa7c98842a",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "营销",
+   "currency": "SGD",
+   "week": "W+2",
+   "start": "2026-08-07",
+   "forecast": 6291.51,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "88a1ec3e3398",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "运营",
+   "currency": "SGD",
+   "week": "W+2",
+   "start": "2026-08-07",
+   "forecast": 10758.35,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "95995dcf0bd0",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": NaN,
+   "project": NaN,
+   "currency": "CNY",
+   "week": "W+2",
+   "start": "2026-08-07",
+   "forecast": 151879.68,
+   "source": "recurring@10日",
+   "confidence": "high",
+   "status": "approved",
+   "pattern_id": "cc2f5a9ad857",
+   "note": NaN,
+   "payee": "深圳子公司(关联方)",
+   "review": "require_human"
+  },
+  {
+   "entity": "HK Co",
+   "project": "运营",
+   "currency": "USD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 23035.05,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "4eaa7c98842a",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "营销",
+   "currency": "SGD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 6291.51,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "88a1ec3e3398",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "运营",
+   "currency": "SGD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 10758.35,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "95995dcf0bd0",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": NaN,
+   "project": NaN,
+   "currency": "USD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 118669.86,
+   "source": "recurring@15日",
+   "confidence": "high",
+   "status": "approved",
+   "pattern_id": "c001aa3b1e60",
+   "note": NaN,
+   "payee": "ADP Payroll",
+   "review": "flag_review"
+  },
+  {
+   "entity": NaN,
+   "project": NaN,
+   "currency": "SGD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 88225.72,
+   "source": "recurring@20日",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "df2f2e1fde78",
+   "note": NaN,
+   "payee": "IRAS",
+   "review": "flag_review"
+  },
+  {
+   "entity": NaN,
+   "project": NaN,
+   "currency": "USD",
+   "week": "W+3",
+   "start": "2026-08-14",
+   "forecast": 11817.38,
+   "source": "recurring@16日",
+   "confidence": "high",
+   "status": "approved",
+   "pattern_id": "474597ec5da2",
+   "note": NaN,
+   "payee": "Vendor-4",
+   "review": "auto_report"
+  },
+  {
+   "entity": "HK Co",
+   "project": "运营",
+   "currency": "USD",
+   "week": "W+4",
+   "start": "2026-08-21",
+   "forecast": 23035.05,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "4eaa7c98842a",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "营销",
+   "currency": "SGD",
+   "week": "W+4",
+   "start": "2026-08-21",
+   "forecast": 6291.51,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "88a1ec3e3398",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  },
+  {
+   "entity": "SG Co",
+   "project": "运营",
+   "currency": "SGD",
+   "week": "W+4",
+   "start": "2026-08-21",
+   "forecast": 10758.35,
+   "source": "weekly_level",
+   "confidence": "provisional",
+   "status": "candidate",
+   "pattern_id": "95995dcf0bd0",
+   "note": "provisional-仅提示",
+   "payee": NaN,
+   "review": "auto_report"
+  }
+ ],
+ "lineage_sample": {
+  "budget_variance": {
+   "pattern_ids": [],
+   "data_range": [
+    "2026-01-02",
+    "2026-07-30"
+   ],
+   "db_row_count": 245,
+   "patterns_generated_at": "2026-08-01T03:59:11+00:00",
+   "computed_at": "2026-08-01T03:59:12+00:00"
+  },
+  "mom_attribution": {
+   "pattern_ids": [],
+   "data_range": [
+    "2026-01-02",
+    "2026-07-30"
+   ],
+   "db_row_count": 245,
+   "patterns_generated_at": "2026-08-01T03:59:11+00:00",
+   "computed_at": "2026-08-01T03:59:12+00:00"
+  },
+  "forecast_4w": {
+   "pattern_ids": [
+    "474597ec5da2",
+    "4eaa7c98842a",
+    "88a1ec3e3398",
+    "95995dcf0bd0",
+    "9d263319118f",
+    "c001aa3b1e60",
+    "cc2f5a9ad857",
+    "df2f2e1fde78"
+   ],
+   "data_range": [
+    "2026-01-02",
+    "2026-07-30"
+   ],
+   "db_row_count": 245,
+   "patterns_generated_at": "2026-08-01T03:59:11+00:00",
+   "computed_at": "2026-08-01T03:59:12+00:00"
+  }
+ }
+}

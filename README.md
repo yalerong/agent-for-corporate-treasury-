@@ -8,7 +8,9 @@
 
 ## 30 秒看结果
 
-合成数据跑出的完整示例：**[examples/report-sample.md](examples/report-sample.md)**
+合成数据跑出的完整示例：**[examples/report-sample.md](examples/report-sample.md)**；
+网页版展示（单文件静态页，可开 GitHub Pages）：**[docs/index.html](docs/index.html)**——
+`python cashflow/export_demo.py` 重新生成 `docs/data.json` 后，`python -m http.server -d docs` 本地预览。
 
 系统从 245 笔原始付款流水中**自动学到**了这些（无任何人工标注）：
 
