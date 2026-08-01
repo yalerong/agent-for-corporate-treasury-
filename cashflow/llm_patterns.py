@@ -29,6 +29,23 @@ PAT = ROOT / "patterns" / "patterns.yaml"
 VERIFY_TOL = 0.05  # claim 数字与 profile 复算值的相对偏差上限
 SLUG_RE = re.compile(r"^[a-z0-9_]{3,40}$")
 
+# Anthropic 通道用作结构化输出硬约束；openai 兼容通道退化为 json_object+三重闸
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"patterns": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "claim": {"type": "string"},
+            "checks": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"field": {"type": "string"}, "value": {"type": "number"}},
+                "required": ["field", "value"], "additionalProperties": False}},
+        },
+        "required": ["slug", "claim", "checks"], "additionalProperties": False}}},
+    "required": ["patterns"], "additionalProperties": False,
+}
+
 SYSTEM = (
     "你是资金数据分析师。你只能基于用户给出的聚合 profile 归纳规律，"
     "禁止编造 profile 里没有的数字。输出严格 JSON："
@@ -118,7 +135,8 @@ def main():
 
     client = llm_client.get_client()
     if client is None:
-        print("未配置 LLM_API_KEY，LLM 归纳环跳过；确定性流水线不受影响。")
+        print("未配置 LLM（LLM_PROVIDER=anthropic 或 LLM_API_KEY），归纳环跳过；"
+              "确定性流水线不受影响。")
         return
     if not PAT.exists():
         raise SystemExit(f"{PAT} 不存在，先跑 patterns.py")
@@ -134,7 +152,8 @@ def main():
     batches = []
     for prof in profiles[:args.max_groups]:
         try:
-            resp = llm_client.chat_json(client, SYSTEM, json.dumps(prof, ensure_ascii=False))
+            resp = llm_client.chat_json(client, SYSTEM, json.dumps(prof, ensure_ascii=False),
+                                        schema=RESPONSE_SCHEMA)
         except ValueError as e:
             print(f"  [跳过] {prof['entity']}/{prof['project']}/{prof['currency']}: {e}")
             continue
