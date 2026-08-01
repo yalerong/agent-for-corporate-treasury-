@@ -53,6 +53,26 @@ def cmd_list(doc: dict, args) -> None:
     print(f"-- 共 {n} 条")
 
 
+def apply_approve(targets: list[dict], by: str) -> None:
+    """批准语义的唯一实现——CLI 与 UI 共用。"""
+    now = ps.now_iso()
+    for p in targets:
+        p["status"] = "approved"
+        p["approved_by"] = by
+        p["approved_at"] = now
+        p["refuted_reason"] = None
+
+
+def apply_refute(targets: list[dict], reason: str, by: str) -> None:
+    """否决语义的唯一实现——只能人为发起，必须给 reason。"""
+    now = ps.now_iso()
+    for p in targets:
+        p["status"] = "refuted"
+        p["refuted_reason"] = f"[{by} {now}] {reason}"
+        p["approved_by"] = None
+        p["approved_at"] = None
+
+
 def cmd_approve(doc: dict, args) -> None:
     if args.ids:
         targets = pick_by_ids(doc, args.ids)
@@ -60,24 +80,14 @@ def cmd_approve(doc: dict, args) -> None:
         targets = [p for p in doc["patterns"] if p["status"] == "candidate" and match(p, args)]
     else:
         raise SystemExit("approve 需要 --ids 或 --all")
-    now = ps.now_iso()
-    for p in targets:
-        p["status"] = "approved"
-        p["approved_by"] = args.by
-        p["approved_at"] = now
-        p["refuted_reason"] = None
+    apply_approve(targets, args.by)
     ps.save(PAT, doc, backup=True)
     print(f"已批准 {len(targets)} 条（by {args.by}）→ {PAT}")
 
 
 def cmd_refute(doc: dict, args) -> None:
     targets = pick_by_ids(doc, args.ids)
-    now = ps.now_iso()
-    for p in targets:
-        p["status"] = "refuted"
-        p["refuted_reason"] = f"[{args.by} {now}] {args.reason}"
-        p["approved_by"] = None
-        p["approved_at"] = None
+    apply_refute(targets, args.reason, args.by)
     ps.save(PAT, doc, backup=True)
     print(f"已否决 {len(targets)} 条（重算不会复活）→ {PAT}")
 
