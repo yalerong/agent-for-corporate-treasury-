@@ -121,15 +121,15 @@ def test_rerun_is_deterministic(pipeline_root):
 
 
 def test_approved_survives_rerun(pipeline_root):
-    pat_file = pipeline_root / "patterns" / "patterns.yaml"
-    pats = yaml.safe_load(pat_file.read_text(encoding="utf-8"))
-    for p in pats["patterns"]:
-        if p["type"] == "recurring" and p["key"]["payee"] == "ADP Payroll":
-            p["approved"] = True
-    pat_file.write_text(yaml.dump(pats, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    pats = load_patterns(pipeline_root)
+    adp_id = by_key(pats, "recurring", payee="ADP Payroll", currency="USD")["id"]
+    run_script("approve.py", pipeline_root, "approve", "--ids", adp_id, "--by", "tester")
     run_script("patterns.py", pipeline_root)
     pats2 = load_patterns(pipeline_root)
     adp = by_key(pats2, "recurring", payee="ADP Payroll", currency="USD")
-    assert adp["approved"] is True
+    assert adp["status"] == "approved"
+    assert adp["approved_by"] == "tester"
+    assert adp["approved"] is True  # 过渡派生字段与 status 一致
     landlord = by_key(pats2, "recurring", payee="Landlord Ltd", currency="USD")
+    assert landlord["status"] == "candidate"
     assert landlord["approved"] is False

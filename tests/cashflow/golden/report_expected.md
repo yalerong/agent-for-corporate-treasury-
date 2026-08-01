@@ -55,4 +55,4 @@
 | 2026-07 |       nan |  139,154 |
 
 ---
-*待人工批准规律 4 条（patterns/patterns.yaml 中 approved:false）；provisional 规律未参与计算。*
+*规律库: approved 0 / candidate 12（其中 high 待批 4）/ refuted 0；provisional 规律未参与计算；批准/否决用 approve.py。*
