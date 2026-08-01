@@ -107,7 +107,7 @@ LangGraph 多智能体框架：意图分类路由、双轨知识库 RAG（行业
 
 - [x] Phase A：数据核心闭环（入库 → 规律 → 核验 → 报告），确定性由回归网守护——`tests/cashflow` 用固定种子合成数据对全链路数字做精确断言（golden 快照），CI 每次变更必跑
 - [x] Phase A+：工程化五连——三态规律库+审批 CLI（批准才生效）→ 指标层+lineage 血缘 → 证据核验+自动降级 → 归因两函数 → LLM 归纳环（三重闸，离线可退化）
-- [ ] Phase B：cashflow 工具封装为 MCP Server，接入对话智能体与 Claude Code
+- [x] Phase B（Claude Code 侧）：cashflow 封装为只读 MCP Server（`mcp_server.py`，10 工具：报告/单节/lineage/预测/规律/核验/付款聚合/余额），仓库根 `.mcp.json` 注册即用；本地审批台 UI（`ui.py`）同步上线。对话智能体（app/）接线待做
 - [ ] Phase C：银行余额 API 直连 + 每日巡检告警（cron）+ 预测 vs 实际准确率曲线
 - [ ] Phase D：审批系统直通（preview 成功才允许 create）+ 例外案例库
 
