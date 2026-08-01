@@ -7,8 +7,8 @@ import yaml
 
 def test_registry_synced_with_yaml():
     ids = [m["id"] for m in metrics.load_registry()]
-    assert ids == ["budget_variance", "forecast_4w", "position", "fx_advice",
-                   "related_party", "approvals_profile"]
+    assert ids == ["budget_variance", "mom_attribution", "forecast_4w", "position",
+                   "fx_advice", "related_party", "approvals_profile", "pattern_validation"]
     assert set(ids) == set(metrics.REGISTRY)
     for m in metrics.load_registry():
         assert m["name"] and m["desc"]  # 登记处必须有中文名与口径说明

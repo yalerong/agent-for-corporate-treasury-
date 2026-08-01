@@ -5,6 +5,10 @@ metrics:
     name: 预算执行差异
     unit: 原币
     desc: 预算（周付款预测）vs 可比口径实际（流水性质=流程支出且剔除 BUDGET_EXCLUDE 内部资金移动），按月对比；聚合预算按币种、明细预算按主体×项目×币种，|差异|>10% 给 Top 收款方根因。
+  - id: mom_attribution
+    name: 当月异动归因
+    unit: 原币
+    desc: 当月 vs 上月环比异动，按 entity/project/payee 维度 contrib 贡献分解取 Top3；贡献金额落在日历预期日（dom 热点/recurring 固定日/月末）占比≥ALIGN_SHARE 打"预期内"砍误报。全确定性，LLM 不参与。
   - id: forecast_4w
     name: 未来4周资金预测
     unit: 原币/周
@@ -25,3 +29,7 @@ metrics:
     name: 审批流程画像
     unit: 单/小时
     desc: 四类申请（调拨/付款/报销/非公户）单量、同意率、审批耗时中位数、月均单量、性质分布 Top3 与耗时 Top3（approvals 表存在时输出）。
+  - id: pattern_validation
+    name: 规律核验
+    unit: 条
+    desc: 读 validate.py 写回的 evidence（hit/violated/uncertain 三态），违反明细=人审清单（违反不自动否决）；连续失败的 approved 自动降级记录一并列出。validate.py 未跑过则本节缺席。

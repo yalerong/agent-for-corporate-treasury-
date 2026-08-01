@@ -23,7 +23,7 @@ def test_balances_ingested(pipeline_root):
 
 def test_position_table_numbers(pipeline_root):
     report = read_report(pipeline_root)
-    assert "## 三、头寸与调拨建议（余额快照 2026-07-30）" in report
+    assert "、头寸与调拨建议（余额快照 2026-07-30）" in report  # 不绑节号，节次随可选节增减
     # 币种级头寸 = 余额 − high 置信 4 周预测流出
     assert "| CNY | 140,000 | 151,880 | -11,880 | ⚠️ 缺口 |" in report
     assert "| USD | 380,000 | 148,487 | 231,513 | 富余 |" in report

@@ -17,7 +17,7 @@ def pipeline_root() -> Path:
     root = Path(tempfile.mkdtemp(prefix="treasury_cf_"))
     try:
         for script in ("make_sample.py", "ingest.py", "ingest_balances.py",
-                   "patterns.py", "engine.py"):
+                       "patterns.py", "validate.py", "engine.py"):
             run_script(script, root)
         yield root
     finally:
