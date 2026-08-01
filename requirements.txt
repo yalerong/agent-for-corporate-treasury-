@@ -38,4 +38,5 @@ numpy>=1.26,<3.0
 openpyxl>=3.1,<4.0
 PyYAML>=6.0,<7.0
 tabulate>=0.9,<1.0  # DataFrame.to_markdown 依赖
-openai>=1,<2  # cashflow LLM 归纳环（llm_client.py 直连，不走 langchain）；无 key 时不需要
+openai>=1,<2  # cashflow LLM 归纳环 openai 兼容通道（DeepSeek 等）；无 key 时不需要
+anthropic>=0.100,<1  # cashflow LLM 归纳环 Claude 通道（LLM_PROVIDER=anthropic 时用）

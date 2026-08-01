@@ -136,6 +136,7 @@ def test_no_key_skips_and_leaves_patterns_untouched(pipeline_root):
     before = pat.read_bytes()
     env = {**os.environ, "CASHFLOW_ROOT": str(pipeline_root), "PYTHONIOENCODING": "utf-8"}
     env.pop("LLM_API_KEY", None)
+    env.pop("LLM_PROVIDER", None)
     r = subprocess.run([sys.executable, "llm_patterns.py"], cwd=CASHFLOW_DIR, env=env,
                        capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0
