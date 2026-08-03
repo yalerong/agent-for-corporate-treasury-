@@ -1,5 +1,6 @@
 """调拨建议引擎 v0：解析纪律（主体空白保留）、已付核销门、缺口、规则路由。"""
 import advisor
+import advisor_accounts as acct
 import advisor_inputs as ai
 import pandas as pd
 import pytest
@@ -165,6 +166,104 @@ def test_rules_only_approved(tmp_dir):
 
 
 # ---------- 建议单 gate ----------
+
+# ---------- v0.1 账户分层 / 归一 / 质检 ----------
+
+ACCT_RULES = RULES + [
+    {"id": "R-017", "type": "account_classification", "status": "approved", "params": {
+        "channel_patterns": ["_EASYLINK_", "_MonetaPay_", "_MTP_"],
+        "project_suffix_patterns": {"_BTSK": "BTSK", "_CC": "CC"},
+        "project_prefix_patterns": {"BTSK-": "BTSK", "Cashcepat-": "CC"}}},
+    {"id": "R-012", "type": "earmarked_account", "status": "approved",
+     "params": {"account": "X_EWB_USD_4821", "purpose": "菲律宾代付专用"}},
+]
+ACCT_BAL = bal_df([
+    ("GAMMA LTD", "X_CITIC_USD_7501", "USD", 400000.0),      # group 可动用
+    ("GAMMA LTD", "X_EWB_USD_4821", "USD", 84000.0),         # earmarked 剔除
+    ("GAMMA LTD", "X_BNI_IDR_GIRO_8806_BTSK", "IDR", 1.2e9),  # project 剔除
+    ("GAMMA LTD", "BTSK-RDL-X", "IDR", 1.5e9),               # project(前缀) 剔除
+    ("GAMMA LTD", "X_EASYLINK_IDR_1789", "IDR", 0.0),        # channel 剔除
+    ("NORTH SA", "pay_NORTH_CW", "MXN", 3000000.0),          # fx_pool 内 → group
+    ("NORTH SA", "opmPay-NORTH-fintek1", "MXN", 2000000.0),  # fx_pool 内 → group
+    ("NORTH SA", "opmPay-NORTH-DBT3", "MXN", 2500000.0),     # exclusive → business 剔除
+])
+
+
+def test_normalize_strips_va_only_for_channel():
+    assert acct.normalize("X_EASYLINK_IDR_6464", ACCT_RULES) == "X_EASYLINK_IDR"
+    assert acct.normalize("X_EASYLINK_IDR_1789", ACCT_RULES) == "X_EASYLINK_IDR"
+    # 非通道户不动尾号（BNI 尾号是账号不是 VA）
+    assert acct.normalize("X_BNI_IDR_GIRO_8806_BTSK", ACCT_RULES) == "X_BNI_IDR_GIRO_8806_BTSK"
+    assert acct.normalize("X_CITIC_USD_7501", ACCT_RULES) == "X_CITIC_USD_7501"
+
+
+def test_classify_scopes():
+    ann = acct.annotate(ACCT_BAL, ACCT_RULES)
+    got = dict(zip(ann["account"], ann["scope"], strict=False))
+    assert got["X_CITIC_USD_7501"] == "group"
+    assert got["X_EWB_USD_4821"] == "earmarked"
+    assert got["X_BNI_IDR_GIRO_8806_BTSK"] == "project"
+    assert got["BTSK-RDL-X"] == "project"
+    assert got["X_EASYLINK_IDR_1789"] == "channel"
+    assert got["pay_NORTH_CW"] == "group"          # 财务控制池算可动用
+    assert got["opmPay-NORTH-DBT3"] == "business"  # exclusive → 业务控制
+    assert dict(zip(ann["account"], ann["scope_detail"], strict=False))[
+        "X_BNI_IDR_GIRO_8806_BTSK"] == "BTSK"
+
+
+def test_entity_avail_excludes_restricted():
+    """XINTAI 式陷阱：整体加总会虚增（EWB 专用+项目户+通道户都不是可动用）。"""
+    emap = {"entities": {"HK GAMMA": "GAMMA LTD", "MX NORTH": "NORTH SA"},
+            "channel_overrides": {}}
+    naive = advisor.entity_avail(ACCT_BAL, emap)                 # 旧行为：整体加总
+    strict = advisor.entity_avail(ACCT_BAL, emap, ACCT_RULES)    # v0.1：只算 group
+    g = lambda df, e, c: float(df[(df["entity"] == e) & (df["currency"] == c)]["avail"].sum())  # noqa: E731
+    assert g(naive, "HK GAMMA", "USD") == 484000.0
+    assert g(strict, "HK GAMMA", "USD") == 400000.0   # 剔掉 EWB 8.4 万
+    assert g(strict, "HK GAMMA", "IDR") == 0.0        # 项目户+通道户全剔
+    assert g(strict, "MX NORTH", "MXN") == 5000000.0  # 只认财务控制两户
+
+
+def test_check_accounts_va_vs_new():
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-28", "2026-07-29", "2026-07-30"]),
+        "currency": ["IDR"] * 3, "amount": [1.0, 2.0, 3.0],
+        "payee": ["X_EASYLINK_IDR_6464",        # VA 轮换 → info
+                  "Y_EASYLINK_IDR_9999",        # 规范键也没有 → warn
+                  "X_CITIC_USD_7501"],          # 已知 → 无
+        "memo": ["同名划转：X_BNI_IDR_GIRO_8806_BTSK 调拨至 X_EASYLINK_IDR_1789", "", ""]})
+    fs = acct.check(ACCT_BAL, flows, ACCT_RULES)
+    infos = [f for f in fs if f["level"] == "info"]
+    warns = [f for f in fs if f["level"] == "warn"]
+    assert any("VA 轮换已归一" in f["msg"] and "6464" in f["msg"] for f in infos)
+    assert any("9999" in f["msg"] and "查无" in f["msg"] for f in warns)
+    # payee 6464 与摘要 1789 归一后同源 → 不报行内矛盾
+    assert not any("行内矛盾" in f["msg"] for f in warns)
+
+
+def test_check_case_difference_is_not_new_account():
+    """真数据回归：finweb 流水写 mongopay_NDM_CW、余额写 MONGOPAY_NDM_CW —
+    同一账户两个标签，应静默归一为 info，不得报"疑似新账户"。"""
+    bal = bal_df([("NORTH SA", "MONGOPAY_NORTH_CW", "MXN", 3000000.0),
+                  ("D LTD", "DOCKING_Uniark_USD", "USD", 21367.0)])
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-28", "2026-07-29"]),
+        "currency": ["MXN", "USD"], "amount": [1.0, 2.0],
+        "payee": ["mongopay_NORTH_CW", "DOCKING_UNIARK_USD"],
+        "memo": ["划转至 MONGOPAY_NORTH_CW", "转入 DOCKING_Uniark_USD"]})
+    fs = acct.check(bal, flows, ACCT_RULES)
+    assert not [f for f in fs if f["level"] == "warn"], f"不该有 warn: {fs}"
+    assert sum("大小写差异已归一" in f["msg"] for f in fs) == 2
+
+
+def test_check_flags_cross_account_mismatch():
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-28"]), "currency": ["USD"], "amount": [1.0],
+        "payee": ["X_EASYLINK_IDR_6464"],
+        "memo": ["实际转入 BTSK-RDL-X"]})   # 与收款方不同源 → warn
+    fs = acct.check(ACCT_BAL, flows, ACCT_RULES)
+    assert any("行内矛盾" in f["msg"] for f in fs if f["level"] == "warn")
+
 
 def test_render_flags_missing_paid_gate():
     gaps = pd.DataFrame([{"entity": "E", "currency": "USD", "need": 1.0, "avail": 0.0,

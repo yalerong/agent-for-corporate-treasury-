@@ -20,6 +20,7 @@
 import argparse
 from pathlib import Path
 
+import advisor_accounts as acct
 import pandas as pd
 from advisor_inputs import (
     load_balances,
@@ -105,14 +106,20 @@ def entity_needs(plan: pd.DataFrame, emap: dict) -> tuple[pd.DataFrame, pd.DataF
     return needs, blank
 
 
-def entity_avail(bal: pd.DataFrame, emap: dict) -> pd.DataFrame:
-    """按映射把 finweb 公司余额折到计划表主体名下（主体×币种求和）。"""
+def entity_avail(bal: pd.DataFrame, emap: dict, rules: list[dict] | None = None) -> pd.DataFrame:
+    """按映射把 finweb 公司余额折到计划表主体名下（主体×币种求和）。
+
+    v0.1：只计入 scope==group 的账户——项目户只能付同项目、专用户有 KYC 摩擦、
+    通道户是过路的、业务控制户留放款周转，四类都不是"可动用"（R-012/014/015/017）。
+    不传 rules 则退回整体加总（旧行为，仅测试用）。
+    """
     name_of = {}
     for short, company in emap["entities"].items():
         name_of[company] = short
     for channel, company in emap["channel_overrides"].items():
         name_of.setdefault(company, channel)
-    df = bal.copy()
+    df = acct.usable(acct.annotate(bal, rules)) if rules else bal.copy()
+    df = df.copy()
     df["entity"] = df["company"].map(name_of)
     df = df[df["entity"].notna()]
     return (df.groupby(["entity", "currency"])["balance"].sum()
@@ -138,6 +145,23 @@ def compute_gaps(needs: pd.DataFrame, avail: pd.DataFrame,
 
 def rules_of(rules: list[dict], typ: str) -> list[dict]:
     return [r for r in rules if r.get("type") == typ]
+
+
+def restricted_summary(bal: pd.DataFrame, emap: dict, rules: list[dict]) -> list[str]:
+    """受限资金一览：明确写出"有钱但不能用"，避免看着余额充裕却做不到。"""
+    ann = acct.annotate(bal, rules)
+    name_of = {c: s for s, c in emap["entities"].items()}
+    ann = ann[ann["company"].map(name_of).notna() & (ann["balance"].abs() > 0.5)]
+    ann = ann.assign(entity=ann["company"].map(name_of))
+    label = {"project": "项目户(只能付同项目)", "earmarked": "专用户",
+             "channel": "通道户(过路,余额≈0)", "business": "业务控制户"}
+    lines = []
+    for (ent, ccy, scope), g in ann[ann["scope"] != "group"].groupby(
+            ["entity", "currency", "scope"]):
+        detail = "/".join(sorted({d for d in g["scope_detail"] if d}))[:40]
+        lines.append(f"{ent} {ccy} {g['balance'].sum():,.0f} —— {label.get(scope, scope)}"
+                     f"{'：' + detail if detail else ''}")
+    return sorted(lines)
 
 
 def build_fx_pools(bal: pd.DataFrame, rules: list[dict]) -> dict:
@@ -224,7 +248,8 @@ def route(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict],
 
 def render(week: str, gaps: pd.DataFrame, blank: pd.DataFrame, actions: list[str],
            warns: list[str], paid_notes: list[str], sources: dict,
-           paid_provided: bool) -> str:
+           paid_provided: bool, restricted: list[str] | None = None,
+           acct_findings: list[dict] | None = None) -> str:
     lines = [f"# 调拨建议单（引擎 v0）· 付款周 {week}", ""]
     if not paid_provided:
         lines += ["> 🚩 **未提供已付核销清单（--paid）**：计划表≠待付清单，下列缺口可能虚高。",
@@ -246,9 +271,20 @@ def render(week: str, gaps: pd.DataFrame, blank: pd.DataFrame, actions: list[str
             lines.append(f"- {r['amount']:,.0f} {r['currency']}｜{str(r['memo'])[:60]}"
                          f"｜截止 {r['deadline']}｜lark {r['lark_no'] or '未提'}")
         lines.append("")
+    if restricted:
+        lines += ["## 受限资金（有钱但不可动用）", "",
+                  "> 缺口表的「现余额」只含集团可自由动用账户；以下不计入。", ""]
+        lines += [f"- {r}" for r in restricted]
+        lines.append("")
     lines += ["## 建议动作", *[f"- {a}" for a in actions], ""]
     if warns:
         lines += ["## 需人工裁决", *[f"- {w}" for w in warns], ""]
+    if acct_findings:
+        warn_n = sum(1 for f in acct_findings if f["level"] == "warn")
+        lines += [f"## 账户质检（{warn_n} 项需确认）", ""]
+        for f in acct_findings:
+            lines.append(f"- {'⚠️' if f['level'] == 'warn' else 'ℹ️'} {f['msg']}")
+        lines.append("")
     lines += ["---", "*引擎只做确定性计算与规则路由；执行前人审。规则库与映射表 gitignore，方法开源。*"]
     return "\n".join(lines)
 
@@ -262,6 +298,8 @@ def main() -> None:
     ap.add_argument("--liushui", help="finweb 流水查询导出，自动核销已付（唯一命中才剔除）")
     ap.add_argument("--liushui-days", type=int, default=14,
                     help="流水回看窗口：周起始日往前 N 天（默认 14）")
+    ap.add_argument("--check-accounts", action="store_true",
+                    help="账户质检：流水 vs 余额一致性（VA 轮换静默归一，真新账户报警）")
     ap.add_argument("--transfers")
     ap.add_argument("--rules", default="advisor_rules.yaml")
     ap.add_argument("--map", dest="emap", default="advisor_entity_map.yaml")
@@ -278,6 +316,7 @@ def main() -> None:
 
     plan, paid_notes = net_paid(plan, paid)  # 人工确认的优先核销
     ambig: list[str] = []
+    flows = None
     if a.liushui:
         start = pd.Timestamp(week.split("-")[0].replace(".", "-"))
         since = (start - pd.Timedelta(days=a.liushui_days)).strftime("%Y-%m-%d")
@@ -285,15 +324,23 @@ def main() -> None:
         plan, auto_notes, ambig = auto_net_from_liushui(plan, flows)
         paid_notes += auto_notes
     needs, blank = entity_needs(plan, emap)
-    avail = entity_avail(bal, emap)
+    avail = entity_avail(bal, emap, rules)
     gaps = compute_gaps(needs, avail, transfers)
     actions, warns = route(gaps, bal, rules, a.fx_usdmxn)
     warns += ambig
+    findings = []
+    if a.check_accounts:
+        if flows is None:
+            warns.append("--check-accounts 需要同时给 --liushui（流水），本次跳过质检")
+        else:
+            findings = acct.check(bal, flows, rules)
     md = render(week, gaps, blank, actions, warns, paid_notes,
                 {"计划表": a.plan, "余额": a.balances, "规则": a.rules,
                  "流水": a.liushui or "未提供（自动核销未启用）",
                  "approved 规则数": len(rules)},
-                paid_provided=bool(a.paid or a.liushui))
+                paid_provided=bool(a.paid or a.liushui),
+                restricted=restricted_summary(bal, emap, rules),
+                acct_findings=findings)
     out_dir = Path(a.out) if a.out else get_root() / "advice"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"advice-{week.replace('.', '')[:8]}.md"
@@ -301,6 +348,9 @@ def main() -> None:
     print(f"建议单 → {out}")
     for w in warns:
         print(f"  [人工] {w}")
+    for f in findings:
+        if f["level"] == "warn":
+            print(f"  [账户] {f['msg']}")
 
 
 if __name__ == "__main__":
