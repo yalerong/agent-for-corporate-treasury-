@@ -43,7 +43,7 @@ cashflow/advisor_paid*.yaml
 !cashflow/advisor_paid.example.yaml
 cashflow/advisor_transfers*.yaml
 !cashflow/advisor_transfers.example.yaml
-cashflow/advice/
+cashflow/advice*/
 TASK_BRIEF.md
 PLAN-*.md
 业务知识-*.md

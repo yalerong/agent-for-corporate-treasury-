@@ -63,3 +63,40 @@ rules:
     statement: "USD 缺口默认由 GAMMA 拆借/往来"
     source: "口授示例"
     effective: "2026-08-02"
+
+  # ---- v0.1 账户层规则：同一主体的账户不是同一个钱包 ----
+
+  - id: R-008
+    type: account_classification    # 分层判据（advisor_accounts.py 直接消费）
+    status: approved
+    params:
+      channel_patterns: ["_CHANNELPAY_"]     # 过路通道户：余额常态≈0，不是弹药
+      project_suffix_patterns: {_PROJA: PROJA, _PROJB: PROJB}   # 账户尾缀编码项目
+      project_prefix_patterns: {"PROJA-": PROJA}                # 资金池户前缀编码项目
+    statement: "项目户只能付同项目；通道户是过路的；两者都不计入可动用余额"
+    source: "示例"
+    effective: "2026-08-02"
+
+  - id: R-009
+    type: earmarked_account         # 专款专用户：有钱也不算可动用
+    status: approved
+    params:
+      account: "ENTITY_SOMEBANK_USD_0001"
+      purpose: "某专项代付"
+      friction: "新增收付款方需合规问询，不宜临时挪用"
+    statement: "专用户不计入通用可动用余额，挪用前先评估摩擦成本"
+    source: "示例"
+    effective: "2026-08-02"
+
+  - id: R-010
+    type: account_alias             # 通道户尾号是渠道分配的虚拟账户号(VA)，会轮换
+    status: approved
+    params:
+      normalize_rule: "按「主体_通道_币种」归一，忽略尾号；大小写一并归一"
+      applies_to_patterns: ["_CHANNELPAY_"]
+    statement: >-
+      同一账户在不同数据源可能有不同标签（VA 轮换、大小写不一致）。
+      **按前缀归一，禁止硬编码别名对**——否则下次轮换再度失配。
+      质检据此区分：归一后同键=同一账户（静默处理）；键不同=真新账户（报警）
+    source: "示例"
+    effective: "2026-08-02"
