@@ -7,6 +7,16 @@ import pytest
 from pipeline_utils import run_script
 
 
+@pytest.fixture
+def tmp_dir():
+    """与根 conftest 同款（此处冗余定义使 cashflow 测试可脱离 app/ 依赖单独跑）。"""
+    path = Path(tempfile.mkdtemp(prefix="treasury_cf_tmp_"))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 @pytest.fixture(scope="session")
 def pipeline_root() -> Path:
     """跑一遍 make_sample → ingest → patterns → engine，返回数据根目录。

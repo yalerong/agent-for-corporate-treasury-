@@ -35,6 +35,15 @@ cashflow/column_map.yaml
 cashflow/related_parties.yaml
 cashflow/history_manifest.yaml
 cashflow/policy.yaml
+
+# 调拨建议引擎：真实规则/映射/周输入/产物全不入库（*.example.yaml 显式提交）
+cashflow/advisor_rules.yaml
+cashflow/advisor_entity_map.yaml
+cashflow/advisor_paid*.yaml
+!cashflow/advisor_paid.example.yaml
+cashflow/advisor_transfers*.yaml
+!cashflow/advisor_transfers.example.yaml
+cashflow/advice/
 TASK_BRIEF.md
 PLAN-*.md
 业务知识-*.md

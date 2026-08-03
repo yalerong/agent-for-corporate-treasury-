@@ -1,0 +1,65 @@
+# 调拨规则库模板（真实 advisor_rules.yaml 已 gitignore，只在本机/内网维护）
+# 三态纪律与 patterns.yaml 同构：status ∈ candidate/approved/refuted，引擎只信 approved。
+# 每条规则必须带出处（source）与生效日（effective）——规则可审计是本方法论的核心卖点。
+schema_version: 1
+rules:
+  - id: R-001
+    type: independent_entity        # 独立主体：不作集团资金池，缺口只能自筹
+    status: approved
+    params: {entity: "HK ALPHA"}
+    statement: "ALPHA 是独立主体，闲置资金不许调出"
+    source: "口授示例"
+    effective: "2026-08-02"
+
+  - id: R-002
+    type: fx_pool                   # 财务控制的换汇资金池（按账户名单逐户取数）
+    status: approved
+    params:
+      side: NORTH                   # 池的名字（一个业务侧一个池）
+      currency: MXN
+      accounts: ["pay_NORTH_CW", "opmPay-NORTH-fintek1"]
+    statement: "NORTH 侧财务池=CW+fintek1 两户；主通道归业务控制不可默认动用"
+    source: "口授示例"
+    effective: "2026-08-02"
+
+  - id: R-003
+    type: fx_route                  # 某主体的 USD/MXN 缺口走哪侧池换汇
+    status: approved
+    params: {entity: "MX BETA", side: NORTH}
+    statement: "BETA 的美元缺口从 NORTH 侧池换汇支付"
+    source: "口授示例"
+    effective: "2026-08-02"
+
+  - id: R-004
+    type: usdt_hub                  # USDT 按地址论：项目 Ledger 可归集到 hub 共用
+    status: approved
+    params:
+      hub: "HUB_Ledger_USDT_xxxx"
+      sweep_accounts: ["PROJ1_Ledger_USDT_yyyy", "PROJ2_UNIARK_USDT"]
+    statement: "USDT 到 hub 即共用；各项目 Ledger 付本项目单"
+    source: "口授示例"
+    effective: "2026-08-02"
+
+  - id: R-005
+    type: weekly_inflow             # 周度自然回流（保守估 low，先抵扣再谈缺口）
+    status: approved
+    params: {currency: USDT, low: 100000, high: 150000}
+    statement: "三个项目每周提现回流 hub 约 10-15 万"
+    source: "台账序列核实示例"
+    effective: "2026-08-02"
+
+  - id: R-006
+    type: usdt_wealth_unlocked      # 已过锁定期、可随时赎回的理财（仅作后备）
+    status: approved
+    params: {amount: 100000, note: "交易所理财已解锁部分"}
+    statement: "理财只作后备，回流不足才赎"
+    source: "理财台账示例"
+    effective: "2026-08-02"
+
+  - id: R-007
+    type: lender                    # 集团内出借方（按币种）
+    status: approved
+    params: {entity: "HK GAMMA", currencies: [USD]}
+    statement: "USD 缺口默认由 GAMMA 拆借/往来"
+    source: "口授示例"
+    effective: "2026-08-02"
