@@ -70,6 +70,30 @@ def load_balances(path: str | Path) -> pd.DataFrame:
     return out
 
 
+def load_liushui(path: str | Path, since: str | None = None) -> pd.DataFrame:
+    """finweb「流水查询_原始流水」导出 → 出账流水（列口径与 ingest_liushui 一致）。
+
+    注意：流水的「项目归属」是业务线，≠计划表付款主体——自动核销只按
+    币种+金额+时间窗匹配，主体不参与（这是已知映射坑，见 TASK_BRIEF）。
+    """
+    raw = pd.read_excel(path)
+    need = ["日期", "币种", "支出原币"]
+    missing = [c for c in need if c not in raw.columns]
+    if missing:
+        raise SystemExit(f"{path} 缺列 {missing}，这不是流水查询原始流水导出？")
+    df = raw[pd.to_numeric(raw["支出原币"], errors="coerce") > 0].copy()
+    out = pd.DataFrame({
+        "date": pd.to_datetime(df["日期"]),
+        "currency": df["币种"].astype(str).str.strip(),
+        "amount": pd.to_numeric(df["支出原币"], errors="coerce"),
+        "payee": df.get("交易对手", pd.Series(dtype=object)).reindex(df.index).fillna(""),
+        "memo": df.get("摘要", pd.Series(dtype=object)).reindex(df.index).fillna(""),
+    }).dropna(subset=["amount"])
+    if since:
+        out = out[out["date"] >= pd.Timestamp(since)]
+    return out.reset_index(drop=True)
+
+
 def load_yaml(path: str | Path, key: str) -> list[dict]:
     """读 paid.yaml / transfers.yaml 之类的 {key: [...]} 文件；文件不存在返回 []。"""
     p = Path(path)

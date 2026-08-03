@@ -4,15 +4,18 @@
 三态 status，只信 approved）；建议单每个数字可追溯到输入文件。
 
 两道硬门（gate）：
-  已付核销门   不提供 --paid 时建议单顶部打红旗——计划表≠待付清单（2026-08 实战：
-               表内混入已执行单会虚增缺口 82 万）。核销靠人工对日记账后填 paid.yaml。
+  已付核销门   计划表≠待付清单（2026-08 实战：表内混入已执行单会虚增缺口 82 万）。
+               首选 --liushui 给 finweb 流水导出自动核销（币种+金额唯一命中才剔除，
+               主体不参与匹配——流水「项目归属」是业务线≠付款主体；含糊命中只提示）；
+               paid.yaml 作人工补充（流水覆盖不到的，如虚拟账户出的 USDT）。
+               两者都不提供 → 建议单顶部打红旗。
   主体空白门   计划表主体空白的行单列人工确认，绝不静默丢弃也绝不猜测归属。
 
 用法：
   python advisor.py --plan 资金计划表.xlsx --balances 余额总览.xlsx \
-      [--week 2026.08.03-2026.08.07] [--paid paid.yaml] [--transfers transfers.yaml] \
-      [--rules advisor_rules.yaml] [--map advisor_entity_map.yaml] \
-      [--fx-usdmxn 17.5] [--out advice]
+      [--week 2026.08.03-2026.08.07] [--liushui 流水查询导出.xlsx] [--paid paid.yaml] \
+      [--transfers transfers.yaml] [--rules advisor_rules.yaml] \
+      [--map advisor_entity_map.yaml] [--fx-usdmxn 17.5] [--out advice]
 """
 import argparse
 from pathlib import Path
@@ -21,6 +24,7 @@ import pandas as pd
 from advisor_inputs import (
     load_balances,
     load_entity_map,
+    load_liushui,
     load_plan_week,
     load_rules,
     load_yaml,
@@ -31,6 +35,32 @@ AMT_TOL = 0.01  # paid 按金额匹配时的容差
 
 
 # ---------- 已付核销 ----------
+
+def auto_net_from_liushui(plan: pd.DataFrame, flows: pd.DataFrame
+                          ) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """对流水自动核销：币种+金额(±AMT_TOL) 唯一命中才剔除，含糊命中只提示。
+
+    主体不参与匹配（流水「项目归属」是业务线≠付款主体）。一笔流水最多核销一行。
+    返回 (剩余计划, 核销记录, 含糊提示)。
+    """
+    drop, notes, ambig = set(), [], []
+    used = set()
+    for i, r in plan.iterrows():
+        m = flows[(flows["currency"] == r["currency"])
+                  & ((flows["amount"] - r["amount"]).abs() <= AMT_TOL)
+                  & (~flows.index.isin(used))]
+        if len(m) == 1:
+            f = m.iloc[0]
+            used.add(m.index[0])
+            drop.add(i)
+            notes.append(f"自动核销：{r['entity']} {r['currency']} {r['amount']:,.2f} ← "
+                         f"流水 {f['date']:%m-%d} {str(f['payee'])[:20]}")
+        elif len(m) > 1:
+            ambig.append(f"{r['entity']} {r['currency']} {r['amount']:,.2f} 在流水里有 "
+                         f"{len(m)} 笔同额命中（{'/'.join(m['date'].dt.strftime('%m-%d'))}）"
+                         f"——请人工核后写入 paid.yaml")
+    return plan.drop(index=list(drop)).reset_index(drop=True), notes, ambig
+
 
 def net_paid(plan: pd.DataFrame, paid: list[dict]) -> tuple[pd.DataFrame, list[str]]:
     """从计划中剔除已执行单。匹配优先级：lark_no 精确 > 主体+币种+金额。"""
@@ -229,6 +259,9 @@ def main() -> None:
     ap.add_argument("--balances", required=True)
     ap.add_argument("--week")
     ap.add_argument("--paid")
+    ap.add_argument("--liushui", help="finweb 流水查询导出，自动核销已付（唯一命中才剔除）")
+    ap.add_argument("--liushui-days", type=int, default=14,
+                    help="流水回看窗口：周起始日往前 N 天（默认 14）")
     ap.add_argument("--transfers")
     ap.add_argument("--rules", default="advisor_rules.yaml")
     ap.add_argument("--map", dest="emap", default="advisor_entity_map.yaml")
@@ -243,14 +276,24 @@ def main() -> None:
     paid = load_yaml(a.paid, "paid") if a.paid else []
     transfers = load_yaml(a.transfers, "transfers") if a.transfers else []
 
-    plan, paid_notes = net_paid(plan, paid)
+    plan, paid_notes = net_paid(plan, paid)  # 人工确认的优先核销
+    ambig: list[str] = []
+    if a.liushui:
+        start = pd.Timestamp(week.split("-")[0].replace(".", "-"))
+        since = (start - pd.Timedelta(days=a.liushui_days)).strftime("%Y-%m-%d")
+        flows = load_liushui(a.liushui, since=since)
+        plan, auto_notes, ambig = auto_net_from_liushui(plan, flows)
+        paid_notes += auto_notes
     needs, blank = entity_needs(plan, emap)
     avail = entity_avail(bal, emap)
     gaps = compute_gaps(needs, avail, transfers)
     actions, warns = route(gaps, bal, rules, a.fx_usdmxn)
+    warns += ambig
     md = render(week, gaps, blank, actions, warns, paid_notes,
                 {"计划表": a.plan, "余额": a.balances, "规则": a.rules,
-                 "approved 规则数": len(rules)}, paid_provided=bool(a.paid))
+                 "流水": a.liushui or "未提供（自动核销未启用）",
+                 "approved 规则数": len(rules)},
+                paid_provided=bool(a.paid or a.liushui))
     out_dir = Path(a.out) if a.out else get_root() / "advice"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"advice-{week.replace('.', '')[:8]}.md"

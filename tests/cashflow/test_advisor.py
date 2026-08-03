@@ -84,6 +84,23 @@ def test_net_paid_by_lark_and_amount():
     assert any("未匹配" in n for n in notes)
 
 
+def test_auto_net_from_liushui():
+    """流水自动核销：唯一命中剔除；同额多笔只提示；一笔流水不核两行。"""
+    plan = plan_df([row("HK GAMMA", 294381.72, "USD"),   # 流水唯一命中 → 核销
+                    row("HK GAMMA", 5000, "USD"),        # 流水两笔同额 → 含糊
+                    row("MX BETA", 5000, "USD"),         # 同上（且不许复用同一笔流水）
+                    row("HK GAMMA", 777, "HKD")])        # 无命中 → 保留
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-29", "2026-07-30", "2026-07-31"]),
+        "currency": ["USD", "USD", "USD"],
+        "amount": [294381.72, 5000.0, 5000.0],
+        "payee": ["葛某", "甲", "乙"], "memo": ["", "", ""]})
+    out, notes, ambig = advisor.auto_net_from_liushui(plan, flows)
+    assert len(out) == 3 and 294381.72 not in out["amount"].values
+    assert sum("自动核销" in n for n in notes) == 1
+    assert len(ambig) == 2 and all("同额命中" in s for s in ambig)
+
+
 # ---------- 缺口与在途 ----------
 
 def test_gaps_with_transit_and_channel_override():
