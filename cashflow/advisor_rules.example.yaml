@@ -88,6 +88,56 @@ rules:
     source: "示例"
     effective: "2026-08-02"
 
+  # ---- 主体层规则：出钱的不一定是承担成本的，缺口不一定是缺钱 ----
+
+  - id: R-011
+    type: conduit_entity            # 通道主体：不用自有钱付款，缺口=拨款未到位
+    status: approved
+    params:
+      entities: ["HK GAMMA", "HK DELTA"]
+      note_own_float: "自有周转余额量级很小，其余余额都是过路专款"
+      funder_rotation: "出资方按当期实际轮换，互为通道，不可硬编码默认出借方"
+    statement: >-
+      识别信号：每笔出款前有等额配套拨入，余额始终回到同一个小数字。
+      这类主体的"缺口"性质是**拨款未到位** → 正确动作=找当期出资方补拨，
+      **不是给它做拆借合同**（找谁要钱、走哪套审批、记什么科目都不同）。
+      算它可动用余额时须扣自有周转与已指定用途的专款
+    source: "示例"
+    effective: "2026-08-03"
+
+  - id: R-012
+    type: passthrough_payment       # 代付两型：先收后付 vs 先垫后收
+    status: approved
+    params:
+      patterns:
+        - name: 预收代付
+          flow: "成本方先汇入 → 本主体转付给最终收款方"
+          gap_semantics: "预收已到=无缺口；预收未到=**催成本方付款，不是内部拆借**"
+        - name: 垫付记往来
+          flow: "本主体先垫付 → 记对成本方应收"
+          gap_semantics: "垫付方须自有头寸；缺口是真缺口，可走拆借"
+    statement: >-
+      **付款主体 ≠ 成本承担方**时先判是哪一型。方向搞反会凭空造一笔内部往来、
+      还找错要钱的对象。识别信号：同额一进一出、摘要含"代X支付"、收付审批单号相邻。
+      核对方法=查主体银行日记账的配套进账
+    source: "示例"
+    effective: "2026-08-03"
+
+  - id: R-013
+    type: counterparty_profile      # 对手方画像：从历史流水挖，比口授更有证据
+    status: approved
+    params:
+      counterparty: "某高频对手方"
+      timing: "账单月末集群（如 20-31 号占七成）"
+      bill_types: "月账单（月末，无息） + 灵活账单（月中，带利息=垫资性质）"
+      payers: ["历史上实际付过的主体清单"]
+      currencies: ["不必假设只用记账本位币"]
+    statement: >-
+      出建议时附上"这个对手方历史上是怎么付的"。规律从 payments 库挖掘而非口授——
+      有证据链、且能发现口授遗漏的路径（如某次用本地币直付离岸账单）
+    source: "示例：历史流水挖掘"
+    effective: "2026-08-03"
+
   - id: R-010
     type: account_alias             # 通道户尾号是渠道分配的虚拟账户号(VA)，会轮换
     status: approved
