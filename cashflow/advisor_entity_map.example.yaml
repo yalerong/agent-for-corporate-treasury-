@@ -1,0 +1,10 @@
+# 主体映射模板（真实 advisor_entity_map.yaml 已 gitignore）
+# entities: 计划表付款主体简称 → finweb 余额导出「公司」全称
+# channel_overrides: 计划表「交易账户」若命中此表，该行需求记到通道名下（如个人卡代付）
+schema_version: 1
+entities:
+  "HK GAMMA": "GAMMA HOLDINGS LIMITED"
+  "MX BETA": "BETA MEXICO S.A.P.I DE C.V."
+  "HK ALPHA": "Alpha Capital Limited"
+channel_overrides:
+  "某某卡": "个人账户（示例）"

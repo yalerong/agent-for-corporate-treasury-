@@ -1,0 +1,9 @@
+# 在途调拨模板（真实文件每周新建，gitignore）
+# 纪律：出账≠到账。arrived 必须对"收款侧"日记账/余额核实后填——
+# true = 已入账（余额已含，引擎忽略）；false = 真在途（计入待到账）。
+transfers:
+  - to_entity: "HK GAMMA"
+    currency: USD
+    amount: 200000
+    arrived: true
+    note: "示例：调拨单 202600000000，收款侧日记账 7/31 已见入账"
