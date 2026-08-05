@@ -1,7 +1,7 @@
 """适配器：finweb「流水查询_原始流水」导出 → payments 标准表。
 
 映射口径:
-  entity   = 项目归属（业务线: 集团/CFI/PRF/EEL/BantuSaku...）
+  entity   = 项目归属（业务线: 集团/BU-A/BU-B/BU-C...）
   project  = 实质分类（管报口径: 手续费出款/账单出款/工资薪酬/关联方拆借出款...）
   payee    = 交易对手（缺失时回退实质分类）
   amount   = 支出原币 > 0 的行（本工具聚焦付款端）

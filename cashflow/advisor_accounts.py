@@ -5,8 +5,8 @@
              禁止硬编码别名对：下次轮换就会再失配。
   classify   账户分层 scope：
                group      集团账户，可自由动用（唯一计入"可动用余额"的一类）
-               project:X  项目账户，只能付同项目（BNI 后缀 / 资金池前缀编码项目）
-               earmarked  专款专用（如 EWB 只供菲律宾代付，KYC 摩擦高）
+               project:X  项目账户，只能付同项目（LBANK 后缀 / 资金池前缀编码项目）
+               earmarked  专款专用（如 XBANK 仅供指定地区代付，KYC 摩擦高）
                channel    过路通道户，余额常态≈0，不是弹药（弹药在其上游项目户）
                business   业务控制（fx_pool 声明 exclusive 时，同主体同币种的其他户）
   check      流水 vs 余额的账户一致性质检：VA 轮换静默归一，真新账户才报警。
@@ -46,8 +46,8 @@ def normalize(account: str, rules: list[dict]) -> str:
 def canon_key(account: str, rules: list[dict]) -> str:
     """比较用规范键：去 VA + 大小写归一。
 
-    finweb 流水模块与余额模块对同一账户大小写不一致（mongopay_NDM_CW vs
-    MONGOPAY_NDM_CW、DOCKING_UNIARK_USD vs DOCKING_Uniark_USD），
+    上游流水模块与余额模块对同一账户大小写不一致（payx_NORTH_CW vs
+    PAYX_NORTH_CW、DELTA_CUSTODY_USD vs DELTA_Custody_USD），
     与 VA 轮换同属"同一账户两个标签"，都该静默归一而非报警。
     """
     return normalize(account, rules).casefold()

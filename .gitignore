@@ -39,6 +39,7 @@ cashflow/policy.yaml
 # 调拨建议引擎：真实规则/映射/周输入/产物全不入库（*.example.yaml 显式提交）
 cashflow/advisor_rules.yaml
 cashflow/advisor_entity_map.yaml
+cashflow/entity_alias.yaml
 cashflow/advisor_paid*.yaml
 !cashflow/advisor_paid.example.yaml
 cashflow/advisor_transfers*.yaml

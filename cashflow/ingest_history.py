@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 import yaml
-from constants import get_root
+from constants import CODE_DIR, get_root
 
 ROOT = get_root()
 DB = ROOT / "data" / "db" / "treasury.db"
@@ -22,9 +22,31 @@ STD_COLS = ["date", "entity", "project", "currency", "payee", "amount", "purpose
 RENAME = {"付款时间": "日期", "资金流入": "入账", "资金流出": "出账",
           "备注": "摘要", "付款编码": "唯一编码", "Unnamed: 1": "我方账户"}
 
-# 历史(项目列)与权威流水(项目归属列)的业务线命名归一
-ENTITY_ALIAS = {"BTSK": "BantuSaku", "CC": "Cashcepat", "Boutique": "BOUTIQUE",
-                "Aurora": "AURORA", "PRF": "PRF(pesos)", "Chota": "CHOTA"}
+_ALIAS_CACHE = None
+
+
+def entity_alias() -> dict:
+    global _ALIAS_CACHE
+    if _ALIAS_CACHE is None:
+        _ALIAS_CACHE = load_entity_alias()
+    return _ALIAS_CACHE
+
+
+def load_entity_alias() -> dict:
+    """历史(项目列)与权威流水(项目归属列)的业务线命名归一表。
+
+    真实业务线命名不入库：复制 entity_alias.example.yaml 为 entity_alias.yaml
+    （已 gitignore）后填写。找不到时用示例表并显式提示——静默套错映射
+    比直接报错更危险，会把两条业务线悄悄并成一条。
+    """
+    for base in (ROOT, CODE_DIR):
+        p = base / "entity_alias.yaml"
+        if p.exists():
+            return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    ex = CODE_DIR / "entity_alias.example.yaml"
+    print(f"! 未找到 entity_alias.yaml，暂用示例映射（{ex.name}）；"
+          f"接真实数据前请复制该文件为 entity_alias.yaml 并填入你的业务线命名")
+    return yaml.safe_load(ex.read_text(encoding="utf-8")) or {}
 
 
 def read_month(month: str, path: str, cutoff: str | None) -> pd.DataFrame:
@@ -51,7 +73,7 @@ def read_month(month: str, path: str, cutoff: str | None) -> pd.DataFrame:
     out = pd.DataFrame({
         "date": df["日期"].dt.strftime("%Y-%m-%d"),
         "entity": (col("项目").fillna("未归属").replace("", "未归属").astype(str)
-                   .str.strip().replace(ENTITY_ALIAS)),
+                   .str.strip().replace(entity_alias())),
         "project": col("辅助字段1").fillna("未分类").replace("", "未分类").astype(str),
         "currency": df["币种"].astype(str).str.strip().str.upper(),
         "payee": col("交易对手").fillna(col("摘要")).fillna("未知").astype(str),
