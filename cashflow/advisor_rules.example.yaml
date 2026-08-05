@@ -17,7 +17,7 @@ rules:
     params:
       side: NORTH                   # 池的名字（一个业务侧一个池）
       currency: MXN
-      accounts: ["pay_NORTH_CW", "opmPay-NORTH-fintek1"]
+      accounts: ["pay_NORTH_CW", "PayB-NORTH-fintek1"]
     statement: "NORTH 侧财务池=CW+fintek1 两户；主通道归业务控制不可默认动用"
     source: "口授示例"
     effective: "2026-08-02"
@@ -35,7 +35,7 @@ rules:
     status: approved
     params:
       hub: "HUB_Ledger_USDT_xxxx"
-      sweep_accounts: ["PROJ1_Ledger_USDT_yyyy", "PROJ2_UNIARK_USDT"]
+      sweep_accounts: ["PROJ1_Ledger_USDT_yyyy", "PROJ2_CUSTODY_USDT"]
     statement: "USDT 到 hub 即共用；各项目 Ledger 付本项目单"
     source: "口授示例"
     effective: "2026-08-02"

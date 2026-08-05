@@ -1,0 +1,7 @@
+# 历史日记账「项目」列 → 权威流水「项目归属」列的业务线命名归一表。
+# 复制为 entity_alias.yaml（已 gitignore）后填入你自己的业务线命名；
+# 左边写历史文件里的简称，右边写权威流水里的标准名。
+PJA: ProductA
+PJB: ProductB
+PJC: ProductC
+BU-A: BU-A(region)
