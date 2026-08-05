@@ -57,8 +57,13 @@ D:\微信小程序\agent\
 │   └── enterprise/        ← 🏢 企业专属（制度、流程、数据）— 高频迭代
 ├── scripts/
 │   └── update_enterprise_kb.py  ← 企业库热更新脚本（不影响行业库）
+├── demo/
+│   └── multi_agent.py     ← 多智能体协作 demo（LangGraph 三节点 + 审批 Gate，离线可跑）
 └── tests/                 ← 单元测试与集成测试
 ```
+
+**`demo/` 定位**：只演示、不承载业务——调用 `cashflow/` 与 `app/` 的既有能力，绝不反向被它们依赖。
+它同时引 langgraph 和 cashflow 平铺模块，所以必须留在顶层，不能塞进 `cashflow/`（那会破坏 §4.3 的零依赖纪律）。
 
 ---
 
