@@ -98,6 +98,67 @@ python ui.py                # 本地审批台：报告/规律审批/预测明细
 
 LangGraph 多智能体框架：意图分类路由、双轨知识库 RAG（行业法规 + 企业制度，Qdrant + bge 本地 embedding）、HITL 人工确认节点、审计日志与敏感信息脱敏工具、Gradio 本地 UI。详见 [DESIGN.md](DESIGN.md)。
 
+## 多智能体协作 demo（一条命令，无需任何 Key）
+
+把 DESIGN.md 的多智能体设计跑成看得见的东西：三个角色节点串成一条链，**每一条"会动钱"的建议都必须过审批 Gate**。
+
+> **可点的网页版**：[docs/multi-agent.html](docs/multi-agent.html)——自包含单文件，浏览器直接打开即可。
+> 同一轮协作的重放，审批处真的停下来等你点批准/驳回，还能拖动审批硬限看红线实时重算
+> （裁决逻辑与 `policy.review_tier` 对拍一致；无外部依赖，可直接托管到任意静态站点）。
+
+```bash
+pip install -r requirements.txt
+python demo/multi_agent.py            # 交互：暂停处敲 y/n 决定批不批
+python demo/multi_agent.py --auto     # 非交互：预置应答，CI/录屏用
+```
+
+首次运行会在临时目录自举一遍合成流水线（固定种子，约 5 秒），跑完自动清理——不碰真实数据，也不需要任何凭据。
+
+**关于"不需要 Key"的准确说法**：不是这套系统不用 LLM，而是**判定不靠 LLM**。金额、缺口、档位、红线全部由代码算出（`metrics` 指标层 + `policy.review_tier`），无 Key 时缺的只是角色那句话——它退化成确定性模板。配上 Key 后，LLM 负责把聚合摘要讲成人话、从流水里归纳新规律进候选池等人批，**判定链路一行都不变**。这正是 `llm_patterns.py` 那套三重闸的同款分工：LLM 总结规律，代码执行规律。
+
+**预期输出**（节选）：
+
+```text
+[编排器] LLM 通道: 未配置（无 ANTHROPIC_API_KEY / LLM_API_KEY），角色叙述走确定性模板，流程照常
+[现金流分析 Agent] 调用只读工具（聚合口径，无单笔流水）: balances_summary, query_forecast, validation_findings, payments_summary
+[现金流分析 Agent]   余额 HK Co CNY: 80,000.00
+[现金流分析 Agent] 截至 2026-07-30，未来 4 周待付 CNY 151,880、SGD 156,425、USD 240,627；核验 4 条规律中 1 条失效。
+[调拨建议 Agent] 产出 5 条草案（尚未生效，全部待批）:
+[调拨建议 Agent]   草案1 [transfer] HK Co → SG Co 调拨 CNY 80,000.00 —— SG Co 该币种缺口 91,879.68，HK Co 可用 80,000.00
+[调拨建议 Agent]   草案3 [prefund] 为 深圳子公司(关联方) 备付 CNY 151,879.68 —— 预测来源 recurring@10日（high/approved）
+
+[人工审批 Gate] ⏸ 需要人工确认: HK Co → SG Co 调拨 CNY 80,000.00
+[人工审批 Gate]   档位 require_human｜理由: 金额 ≥ CNY flag_review 阈值 50,000；跨主体调拨：动其他主体的钱，一律人工确认
+[人工审批 Gate]   批准吗? (y/n): y
+
+[人工审批 Gate] 草案2/5 购汇 CNY 11,879.68 → 档位 auto_report｜✅ 放行（仅标注，不改动任何账务）
+[人工审批 Gate] 草案3/5 为 深圳子公司(关联方) 备付 CNY 151,879.68 → 档位 require_human｜❌ 拒绝
+[人工审批 Gate]   触发红线: policy 关键词命中「关联方」
+[人工审批 Gate]   触发红线: 金额 151,879.68 CNY ≥ 硬限 120,000.00（demo 红线：超此额度不走 Agent 通道，退线下双签）
+[编排器] 汇总: 共 5 条草案 → 放行 3、人工批准 1、人工驳回 0、红线拒绝 1
+[编排器] 本 demo 全程只读：没有任何付款执行工具，Agent 手上没有这把枪
+```
+
+**三档判定**（金额/关键词阈值复用 `cashflow/policy.yaml`；硬限用 `--hard-limit` 或 `DEMO_GATE_HARD_LIMIT` 调）：
+
+| 判定 | 条件 | 处置 |
+| --- | --- | --- |
+| ✅ 放行 | policy 档位 auto_report / flag_review | 进汇总并标注档位，不生成任何指令 |
+| ⏸ 待人工 | 档位 require_human（大额、关键词命中，或跨主体调拨这类固有红线） | LangGraph `interrupt` 暂停，等人 y/n 后 `Command(resume)` 恢复 |
+| ❌ 拒绝 | require_human 且金额 ≥ 硬限 | 连人工通道都不开，退线下双签，并逐条打印触发了哪些红线 |
+
+**与设计文档的对应关系**：
+
+| demo 里的东西 | 对应设计章节 | 说明 |
+| --- | --- | --- |
+| 三节点 StateGraph + 条件边 | DESIGN.md §4.2.2 状态图 / §4.2.3 条件边 | HITL 是横切节点，任何 Agent 都能触发，不绑定角色 |
+| 分析 → 建议 → 审批的多阶段编排 | DESIGN.md §5.1 资金调拨流程 | 同一条"头寸检查 → 合规判定 → 人工确认"链路的最小实现 |
+| Gate 三档判定 | DESIGN_V2.md §1.3 分级自主权 | demo 停在 **L1 提议**：生成方案、人逐笔批，不越到 L2 执行 |
+| 只调 `mcp_server` 聚合工具 | CLAUDE.md §4.3 三重闸 / DESIGN.md Layer 6 | Agent 拿不到单笔流水，只见聚合口径 |
+| 无 Key 走确定性模板 | 开篇「LLM 是锦上添花不是依赖」 | 与 `llm_patterns.py` 同款降级：`get_client()` 返回 None 即跳过 |
+
+编排直接用 LangGraph（已在 `requirements.txt`，`app/` 在用），没有自研状态机——DESIGN.md §4.2.0 已定死"状态机用 LangGraph、HITL 走 `interrupt`"，另造一个反而与设计脱节。
+
 ## 安全与合规红线
 
 - 真实数据、账户映射、规律库、真实阈值配置全部 gitignore，仓库只含代码与合成示例（`*.example` 模板模式）

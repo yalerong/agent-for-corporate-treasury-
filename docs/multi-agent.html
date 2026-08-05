@@ -1,0 +1,841 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>多智能体协作 · 资金调拨审批 demo</title>
+<meta name="description" content="三个 Agent 分工协作产出资金调拨建议，每一条会动钱的建议都必须过审批红线。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23B23A32'/%3E%3Crect x='9' y='9' width='14' height='14' rx='1.5' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E">
+
+<style>
+:root {
+  --paper: #F1F4F5;
+  --card: #FFFFFF;
+  --ink: #16202B;
+  --ink-2: #4A5B66;
+  --ink-3: #7B8B95;
+  --rule: #DCE3E6;
+  --accent: #1F4E5F;
+  --accent-soft: #E4EDEF;
+  /* 状态三色：标记用（已过 CVD/明度/对比校验），文字另用加深的 -ink 变体 */
+  --seal: #CE3B2C;   --seal-ink: #A32A20;   --seal-soft: #FBE9E7;
+  --jade: #0E8C6D;   --jade-ink: #0A6B52;   --jade-soft: #E4F2EC;
+  --amber: #E0A80C;  --amber-ink: #8A6608;  --amber-soft: #FBF1DC;
+  --shadow: 0 1px 2px rgba(22,32,43,.06), 0 8px 24px -12px rgba(22,32,43,.18);
+
+  --cn: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #10171E; --card: #18222B; --ink: #E6ECEF; --ink-2: #A3B4BD; --ink-3: #74868F;
+    --rule: #26333D; --accent: #6FB2C4; --accent-soft: #1B2E36;
+    --seal: #C2423B; --seal-ink: #E8776B; --seal-soft: #2E1B19;
+    --jade: #369F75; --jade-ink: #4FBF92; --jade-soft: #162C25;
+    --amber: #B78D24; --amber-ink: #D9A83C; --amber-soft: #2A2313;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #10171E; --card: #18222B; --ink: #E6ECEF; --ink-2: #A3B4BD; --ink-3: #74868F;
+  --rule: #26333D; --accent: #6FB2C4; --accent-soft: #1B2E36;
+  --seal: #C2423B; --seal-ink: #E8776B; --seal-soft: #2E1B19;
+  --jade: #369F75; --jade-ink: #4FBF92; --jade-soft: #162C25;
+  --amber: #B78D24; --amber-ink: #D9A83C; --amber-soft: #2A2313;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+:root[data-theme="light"] {
+  --paper: #F1F4F5; --card: #FFFFFF; --ink: #16202B; --ink-2: #4A5B66; --ink-3: #7B8B95;
+  --rule: #DCE3E6; --accent: #1F4E5F; --accent-soft: #E4EDEF;
+  --seal: #CE3B2C; --seal-ink: #A32A20; --seal-soft: #FBE9E7;
+  --jade: #0E8C6D; --jade-ink: #0A6B52; --jade-soft: #E4F2EC;
+  --amber: #E0A80C; --amber-ink: #8A6608; --amber-soft: #FBF1DC;
+  --shadow: 0 1px 2px rgba(22,32,43,.06), 0 8px 24px -12px rgba(22,32,43,.18);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--cn); font-size: 15px; line-height: 1.7;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+.wrap { max-width: 40rem; margin: 0 auto; padding: 2rem 1.15rem 4rem; }
+
+/* ---------- 页眉 ---------- */
+.eyebrow {
+  font-family: var(--mono); font-size: .7rem; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 .7rem;
+}
+h1 {
+  margin: 0; font-size: 1.65rem; line-height: 1.35; font-weight: 700;
+  letter-spacing: -.01em; text-wrap: balance;
+}
+.lede { margin: .9rem 0 0; color: var(--ink-2); }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+.creed { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1.4rem 0 0; padding: 0; list-style: none; }
+.creed li {
+  font-size: .76rem; line-height: 1.5; color: var(--ink-2);
+  border: 1px solid var(--rule); border-radius: 2px;
+  padding: .3rem .55rem; background: var(--card);
+}
+.creed b { color: var(--ink); font-weight: 600; }
+
+.divider { height: 1px; background: var(--rule); margin: 2.2rem 0; border: 0; }
+
+/* ---------- 链路图 ---------- */
+.flow {
+  display: grid; grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: stretch; gap: .35rem; margin: 1.5rem 0 0;
+}
+.node {
+  background: var(--card); border: 1px solid var(--rule); border-top: 2px solid var(--nc, var(--ink-3));
+  border-radius: 2px; padding: .55rem .5rem; text-align: center;
+  opacity: .55; transition: opacity .25s, box-shadow .25s, transform .25s;
+}
+.node[data-state="active"] { opacity: 1; box-shadow: var(--shadow); transform: translateY(-2px); }
+.node[data-state="done"] { opacity: 1; }
+.node[data-n="1"] { --nc: var(--accent); }
+.node[data-n="2"] { --nc: var(--amber); }
+.node[data-n="3"] { --nc: var(--seal); }
+.node b { display: block; font-size: .78rem; font-weight: 700; color: var(--nc); line-height: 1.35; }
+.node span { display: block; font-size: .68rem; color: var(--ink-3); margin-top: .15rem; line-height: 1.4; }
+.arrow { align-self: center; color: var(--ink-3); font-family: var(--mono); font-size: .8rem; }
+.flow-note { margin: .5rem 0 0; font-size: .74rem; color: var(--ink-3); }
+
+/* ---------- LLM 边界说明 ---------- */
+.llm {
+  margin: 1.5rem 0 0; padding: .85rem .9rem;
+  background: var(--card); border: 1px solid var(--rule); border-radius: 3px;
+}
+.llm-head { margin: 0 0 .6rem; font-size: .84rem; font-weight: 600; }
+.llm-head b { color: var(--seal-ink); }
+.llm-grid { display: grid; gap: .7rem; }
+@media (min-width: 34rem) { .llm-grid { grid-template-columns: 1fr 1fr; gap: 1rem; } }
+.llm-tag {
+  display: block; font-family: var(--mono); font-size: .68rem; letter-spacing: .04em;
+  color: var(--ink-3); margin-bottom: .3rem;
+}
+.llm-grid ul { margin: 0; padding-left: 1rem; }
+.llm-grid li { font-size: .78rem; line-height: 1.65; color: var(--ink-2); }
+.llm-grid li b { color: var(--jade-ink); font-weight: 700; }
+.llm-foot {
+  margin: .7rem 0 0; padding-top: .6rem; border-top: 1px solid var(--rule);
+  font-size: .78rem; color: var(--ink-2); line-height: 1.65;
+}
+.llm-foot b { color: var(--ink); font-weight: 600; }
+
+/* ---------- 头寸图（净头寸：富余 / 缺口） ---------- */
+.pos { margin: .6rem 0 0; }
+.pos-row {
+  display: grid; grid-template-columns: 6.4rem 1fr; align-items: center;
+  gap: .5rem; padding: .22rem 0;
+}
+.pos-key { font-size: .78rem; color: var(--ink-2); }
+.pos-track {
+  position: relative; height: 1.15rem;
+  background: linear-gradient(var(--rule), var(--rule)) 50% / 1px 100% no-repeat;
+}
+.pos-bar {
+  position: absolute; top: .16rem; height: .82rem; border-radius: 2px;
+  background: var(--bar, var(--ink-3));
+}
+.pos-bar.is-neg { --bar: var(--seal); right: 50%; border-radius: 2px 0 0 2px; }
+.pos-bar.is-pos { --bar: var(--jade); left: 50%; border-radius: 0 2px 2px 0; }
+.pos-val {
+  position: absolute; top: 0; font-family: var(--mono); font-size: .7rem; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.15rem; color: var(--ink-2); white-space: nowrap;
+}
+.pos-legend {
+  display: flex; gap: .9rem; margin: .45rem 0 0; font-size: .72rem; color: var(--ink-3);
+}
+.pos-legend i { display: inline-block; width: .55rem; height: .55rem; border-radius: 1px; margin-right: .28rem; }
+.pos-cap { margin: .5rem 0 0; font-size: .76rem; color: var(--ink-2); line-height: 1.6; }
+.pos-cap b { color: var(--ink); font-weight: 600; }
+
+/* ---------- 裁决分段条 ---------- */
+.split { display: flex; gap: 2px; height: 1.5rem; margin: .3rem 0 .5rem; }
+.split div {
+  border-radius: 2px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: .72rem; font-weight: 700; color: #fff;
+  min-width: 1.4rem; transition: flex-grow .3s;
+}
+.split .s-pass { background: var(--jade); }
+.split .s-appr { background: var(--jade); opacity: .62; }
+.split .s-decl { background: var(--seal); opacity: .62; }
+.split .s-rej  { background: var(--seal); }
+.split .s-wait { background: var(--amber); }
+.split-key { display: flex; flex-wrap: wrap; gap: .1rem .85rem; font-size: .72rem; color: var(--ink-2); }
+.split-key span { display: inline-flex; align-items: center; }
+.split-key i { display: inline-block; width: .55rem; height: .55rem; border-radius: 1px; margin-right: .3rem; }
+
+/* ---------- 控制条 ---------- */
+.console {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 3px;
+  padding: 1rem 1.05rem; box-shadow: var(--shadow);
+}
+.console-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: .8rem;
+  margin-bottom: .55rem;
+}
+.console-title { font-size: .82rem; font-weight: 600; letter-spacing: .01em; }
+.console-note { font-size: .72rem; color: var(--ink-3); font-family: var(--mono); }
+.limit-row { display: flex; align-items: center; gap: .8rem; }
+input[type=range] {
+  flex: 1; accent-color: var(--seal); height: 1.6rem; background: transparent;
+}
+input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.limit-val {
+  font-family: var(--mono); font-size: .95rem; font-weight: 600; color: var(--seal);
+  font-variant-numeric: tabular-nums; min-width: 5.4rem; text-align: right;
+}
+.limit-hint { margin: .5rem 0 0; font-size: .74rem; color: var(--ink-3); line-height: 1.55; }
+
+.btn {
+  font-family: var(--cn); font-size: .88rem; font-weight: 600; color: #fff;
+  background: var(--accent); border: 0; border-radius: 2px;
+  padding: .62rem 1.1rem; cursor: pointer; transition: opacity .15s;
+}
+.btn:hover { opacity: .88; }
+.btn:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+.btn[disabled] { opacity: .4; cursor: default; }
+.btn-row { display: flex; gap: .55rem; align-items: center; margin-top: .9rem; flex-wrap: wrap; }
+.btn-ghost { background: transparent; color: var(--ink-2); border: 1px solid var(--rule); }
+.btn-ghost:hover { color: var(--ink); }
+
+/* ---------- 时间轴 ---------- */
+.stage { margin-top: 2rem; }
+.lane { position: relative; padding-left: 1.5rem; }
+.lane::before {
+  content: ""; position: absolute; left: .3rem; top: .45rem; bottom: -.2rem;
+  width: 1px; background: var(--rule);
+}
+.lane:last-child::before { bottom: auto; height: 1.2rem; }
+.lane + .lane { margin-top: 1.5rem; }
+.lane::after {
+  content: ""; position: absolute; left: 0; top: .42rem;
+  width: .62rem; height: .62rem; border-radius: 50%;
+  background: var(--paper); border: 2px solid var(--role, var(--accent));
+}
+.lane[data-role="analyst"] { --role: var(--accent); }
+.lane[data-role="advisor"] { --role: var(--amber); }
+.lane[data-role="gate"]    { --role: var(--seal); }
+.lane[data-role="orch"]    { --role: var(--ink-3); }
+
+.role {
+  font-size: .78rem; font-weight: 700; letter-spacing: .02em; color: var(--role);
+  margin: 0 0 .45rem;
+}
+.role span { font-family: var(--mono); font-weight: 400; font-size: .7rem; color: var(--ink-3); letter-spacing: 0; }
+.said { margin: 0; color: var(--ink-2); font-size: .9rem; }
+.said + .said { margin-top: .35rem; }
+
+.tools { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0 0 .55rem; padding: 0; list-style: none; }
+.tools li {
+  font-family: var(--mono); font-size: .68rem; color: var(--accent);
+  background: var(--accent-soft); border-radius: 2px; padding: .16rem .4rem;
+}
+.figures { margin: .55rem 0 0; border-top: 1px solid var(--rule); }
+.figure {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .3rem 0; border-bottom: 1px solid var(--rule); font-size: .82rem;
+}
+.figure dt { color: var(--ink-2); }
+.figure dd {
+  margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
+}
+
+/* ---------- 草案卡 ---------- */
+.card {
+  background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--tone, var(--ink-3));
+  border-radius: 2px; padding: .8rem .9rem; box-shadow: var(--shadow);
+}
+.card + .card { margin-top: .6rem; }
+.card[data-verdict="passed"] { --tone: var(--jade); }
+.card[data-verdict="needs_human"] { --tone: var(--amber); }
+.card[data-verdict="rejected"] { --tone: var(--seal); }
+.card[data-verdict="approved"] { --tone: var(--jade); }
+.card[data-verdict="declined"] { --tone: var(--seal); }
+.card[data-verdict="pending"] { --tone: var(--ink-3); }
+
+.card-top { display: flex; align-items: baseline; gap: .5rem; justify-content: space-between; }
+.card-kind {
+  font-family: var(--mono); font-size: .66rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.card-title { margin: .15rem 0 0; font-size: .95rem; font-weight: 600; line-height: 1.45; }
+.card-amt { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.card-why { margin: .3rem 0 0; font-size: .78rem; color: var(--ink-3); line-height: 1.55; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: .3rem; flex: none;
+  font-family: var(--mono); font-size: .68rem; font-weight: 600; letter-spacing: .02em;
+  border-radius: 2px; padding: .18rem .45rem; white-space: nowrap;
+  color: var(--tone); background: var(--tone-soft, transparent);
+}
+.card[data-verdict="passed"] .pill, .card[data-verdict="approved"] .pill { --tone-soft: var(--jade-soft); }
+.card[data-verdict="needs_human"] .pill { --tone-soft: var(--amber-soft); }
+.card[data-verdict="rejected"] .pill, .card[data-verdict="declined"] .pill { --tone-soft: var(--seal-soft); }
+
+.redlines { margin: .55rem 0 0; padding: 0; list-style: none; }
+.redlines li {
+  position: relative; padding-left: .9rem; font-size: .78rem; line-height: 1.6; color: var(--ink-2);
+}
+.redlines li::before {
+  content: ""; position: absolute; left: 0; top: .62em;
+  width: .34rem; height: .34rem; background: var(--tone); border-radius: 50%;
+}
+.disposal {
+  margin: .5rem 0 0; padding: .4rem .55rem; font-size: .78rem;
+  background: var(--seal-soft); color: var(--seal); border-radius: 2px;
+}
+
+/* ---------- 审批操作 ---------- */
+.ask {
+  margin: .65rem 0 0; padding: .7rem .75rem; border-radius: 2px;
+  background: var(--amber-soft); border: 1px dashed var(--amber);
+}
+.ask p { margin: 0 0 .55rem; font-size: .82rem; color: var(--ink); font-weight: 600; }
+.ask-btns { display: flex; gap: .5rem; }
+.ask-btns .btn { flex: 1; padding: .55rem .6rem; font-size: .85rem; }
+.btn-ok { background: var(--jade); }
+.btn-no { background: var(--seal); }
+
+.answered { margin: .5rem 0 0; font-size: .8rem; font-weight: 600; color: var(--tone); }
+
+/* ---------- 汇总 ---------- */
+.waiting {
+  margin: .55rem 0 0; font-size: .8rem; color: var(--amber);
+  padding-left: .8rem; border-left: 2px solid var(--amber);
+}
+.closing {
+  margin: .8rem 0 0; padding: .7rem .8rem; border-left: 3px solid var(--seal);
+  background: var(--card); font-size: .86rem; color: var(--ink);
+}
+
+/* ---------- 页脚 ---------- */
+h2 { font-size: 1rem; font-weight: 700; margin: 0 0 .7rem; letter-spacing: .01em; }
+.map { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.map th, .map td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.map th { color: var(--ink-3); font-weight: 600; font-size: .72rem; }
+.map td:first-child { font-weight: 600; white-space: nowrap; }
+.map td code { font-family: var(--mono); font-size: .74rem; color: var(--accent); }
+.scroll-x { overflow-x: auto; }
+pre {
+  font-family: var(--mono); font-size: .78rem; line-height: 1.7; margin: 0;
+  background: var(--card); border: 1px solid var(--rule); border-radius: 2px;
+  padding: .7rem .8rem; overflow-x: auto; color: var(--ink-2);
+}
+pre b { color: var(--ink); font-weight: 600; }
+footer { margin-top: 2.4rem; font-size: .76rem; color: var(--ink-3); line-height: 1.7; }
+footer a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--rule); }
+footer a:hover { border-bottom-color: var(--accent); }
+footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.reveal { opacity: 0; transform: translateY(6px); animation: rise .38s ease forwards; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; opacity: 1; transform: none; }
+  * { transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Corporate Treasury Agent</p>
+    <h1>三个 Agent 分工干活，<br>到红线处停下来找人</h1>
+    <p class="lede">
+      资金调拨建议的完整链路：<strong>现金流分析</strong>拿聚合数据、<strong>调拨建议</strong>出草案、
+      <strong>人工审批</strong>逐条裁决。下面这一轮是本地 demo 的真实重放——数据来自确定性流水线跑出的合成账套，
+      判定逻辑与终端里那份一字不差。
+    </p>
+    <ul class="creed">
+      <li><b>判定不靠模型</b> 金额与红线都是代码算的</li>
+      <li><b>只见聚合口径</b> Agent 拿不到单笔流水</li>
+      <li><b>没有付款工具</b> 安全靠工具不存在</li>
+    </ul>
+
+    <div class="flow" id="flow" role="img"
+         aria-label="协作链路：现金流分析 Agent 到调拨建议 Agent 到人工审批 Gate">
+      <div class="node" data-n="1" data-state="idle"><b>现金流分析</b><span>只读聚合工具</span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node" data-n="2" data-state="idle"><b>调拨建议</b><span>产出草案</span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node" data-n="3" data-state="idle"><b>人工审批</b><span>红线裁决</span></div>
+    </div>
+    <p class="flow-note">跑起来时，正在干活的那个节点会亮起。</p>
+
+    <div class="llm">
+      <p class="llm-head">这一轮<b>没有配 API Key</b>——那 LLM 到底管什么？</p>
+      <div class="llm-grid">
+        <div>
+          <span class="llm-tag">现在这一轮（离线）</span>
+          <ul>
+            <li>角色的那句话 = 确定性模板</li>
+            <li>金额、缺口、档位、红线 = 代码</li>
+            <li>你看到的每个数字都不是模型生成的</li>
+          </ul>
+        </div>
+        <div>
+          <span class="llm-tag">生产环境（配上 Key）</span>
+          <ul>
+            <li>角色的那句话 = 模型改写摘要</li>
+            <li>模型还负责从流水里归纳新规律，进候选池等人批</li>
+            <li>金额、缺口、档位、红线 <b>= 仍然是代码</b></li>
+          </ul>
+        </div>
+      </div>
+      <p class="llm-foot">
+        这是刻意的分工：<b>LLM 总结规律，代码执行规律</b>。模型不可用、网络断了、Key 过期，
+        判定链路照常出结果——差别只是话说得干不干瘪。
+      </p>
+    </div>
+  </header>
+
+  <hr class="divider">
+
+  <section class="console" aria-labelledby="limit-label">
+    <div class="console-head">
+      <span class="console-title" id="limit-label">审批硬限</span>
+      <span class="console-note">DEMO_GATE_HARD_LIMIT</span>
+    </div>
+    <div class="limit-row">
+      <input type="range" id="limit" min="20000" max="300000" step="5000" value="120000"
+             aria-labelledby="limit-label" aria-describedby="limit-hint">
+      <output class="limit-val" id="limit-val">120,000</output>
+    </div>
+    <p class="limit-hint" id="limit-hint">
+      拖动它，下面五条草案的裁决会实时重算。<strong>必须人工确认</strong>的草案一旦超过这条线，
+      连人工通道都不开——退回线下双签。阈值是配置，不是写死在代码里的数字。
+    </p>
+    <div class="btn-row">
+      <button class="btn" id="run">开始这一轮协作</button>
+      <button class="btn btn-ghost" id="reset" hidden>重新来一遍</button>
+    </div>
+  </section>
+
+  <div class="stage" id="stage" aria-live="polite"></div>
+
+  <hr class="divider">
+
+  <section>
+    <h2>页面上的每一块，对应设计文档的哪一章</h2>
+    <div class="scroll-x">
+      <table class="map">
+        <thead><tr><th>demo 里的东西</th><th>对应章节</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>三节点编排</td><td>DESIGN.md §4.2.2</td><td>审批是横切节点，任何 Agent 都能触发，不绑定角色</td></tr>
+          <tr><td>分析→建议→审批</td><td>DESIGN.md §5.1</td><td>「头寸检查 → 合规判定 → 人工确认」的最小实现</td></tr>
+          <tr><td>三档裁决</td><td>DESIGN_V2.md §1.3</td><td>停在 <strong>L1 提议</strong>：生成方案、人逐笔批，不越到 L2 执行</td></tr>
+          <tr><td>只读聚合工具</td><td>CLAUDE.md §4.3</td><td>四个只读工具全是聚合口径，<code>payments_summary</code> 也不吐单笔</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <section>
+    <h2>本地跑一模一样的一轮</h2>
+    <pre><b>python demo/multi_agent.py</b>          # 暂停处敲 y/n
+<b>python demo/multi_agent.py --auto</b>   # 非交互，CI 用</pre>
+    <footer>
+      约 5 秒跑完，首次运行自举一遍合成账套（固定种子），跑完自动清理。
+      本页数字取自其中一次真实运行，未做任何美化。<br>
+      源码：<a href="https://github.com/yalerong/agent-for-corporate-treasury-/blob/main/demo/multi_agent.py"
+        target="_blank" rel="noopener">demo/multi_agent.py</a>——三个节点、审批红线、降级逻辑都在这一个文件里。<br>
+      全部为合成数据，与任何真实企业账务无关。
+    </footer>
+  </section>
+</div>
+
+<script>
+"use strict";
+
+const POLICY = { flag_review: 50000, require_human: 500000, keywords: ["关联方", "拆借", "注资"] };
+const ALWAYS_HUMAN = new Set(["transfer"]);
+const TIERS = ["auto_report", "flag_review", "require_human"];
+const TIER_CN = { auto_report: "auto_report", flag_review: "flag_review", require_human: "require_human" };
+
+const ANALYSIS = {
+  asOf: "2026-07-30",
+  tools: ["balances_summary", "query_forecast", "validation_findings", "payments_summary"],
+  balances: [
+    ["HK Co · CNY", "80,000.00"], ["HK Co · USD", "380,000.00"],
+    ["SG Co · CNY", "60,000.00"], ["SG Co · SGD", "260,000.00"],
+  ],
+  say: "截至 2026-07-30，未来 4 周待付 CNY 151,880、SGD 156,425、USD 240,627；核验 4 条规律中 1 条失效。",
+};
+
+/* 净头寸 = 余额 − 未来 4 周预测流出（引擎 position 指标口径）。
+   币种级三条解释「哪个币种不够」，CNY 主体级两条解释「为什么要从 HK 调给 SG」。 */
+const POSITION = {
+  byCurrency: [
+    { key: "CNY", net: -11879.68 },
+    { key: "SGD", net: 260000 },
+    { key: "USD", net: 231512.76 },
+  ],
+  cnyByEntity: [
+    { key: "HK Co · CNY", net: 80000 },
+    { key: "SG Co · CNY", net: -91879.68 },
+  ],
+};
+
+const PROPOSALS = [
+  { kind: "transfer", amount: 80000, currency: "CNY",
+    title: "HK Co → SG Co 调拨 CNY 80,000.00",
+    text: "HK Co|SG Co|主体间调拨",
+    why: "SG Co 该币种缺口 91,879.68，HK Co 可用 80,000.00" },
+  { kind: "fx_purchase", amount: 11879.68, currency: "CNY",
+    title: "购汇 CNY 11,879.68",
+    text: "购汇|CNY",
+    why: "余额与调拨后仍未覆盖的净缺口" },
+  { kind: "prefund", amount: 151879.68, currency: "CNY",
+    title: "为 深圳子公司(关联方) 备付 CNY 151,879.68",
+    text: "深圳子公司(关联方)",
+    why: "预测来源 recurring@10日（high / approved）" },
+  { kind: "prefund", amount: 118669.86, currency: "USD",
+    title: "为 ADP Payroll 备付 USD 118,669.86",
+    text: "ADP Payroll",
+    why: "预测来源 recurring@15日（high / approved）" },
+  { kind: "prefund", amount: 88225.72, currency: "SGD",
+    title: "为 IRAS 备付 SGD 88,225.72",
+    text: "IRAS",
+    why: "预测来源 recurring@20日（provisional / candidate）" },
+];
+
+const fmt = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt0 = n => n.toLocaleString("en-US");
+
+/* 与 cashflow/policy.py review_tier + demo 的动作红线同构 */
+function judge(p, hardLimit) {
+  const reasons = [];
+  let base = "auto_report";
+  const hitKw = POLICY.keywords.filter(k => p.text.includes(k));
+  if (hitKw.length) {
+    base = "require_human";
+    hitKw.forEach(k => reasons.push(`policy 关键词命中「${k}」`));
+  } else if (p.amount >= POLICY.require_human) {
+    base = "require_human";
+  } else if (p.amount >= POLICY.flag_review) {
+    base = "flag_review";
+  }
+  if (p.amount >= POLICY.require_human) {
+    reasons.push(`金额 ≥ ${p.currency} require_human 阈值 ${fmt0(POLICY.require_human)}`);
+  } else if (p.amount >= POLICY.flag_review) {
+    reasons.push(`金额 ≥ ${p.currency} flag_review 阈值 ${fmt0(POLICY.flag_review)}`);
+  }
+  let tier = base;
+  if (ALWAYS_HUMAN.has(p.kind)) {
+    reasons.push("跨主体调拨：动其他主体的钱，一律人工确认");
+    if (TIERS.indexOf(base) < TIERS.indexOf("require_human")) tier = "require_human";
+  }
+  if (tier === "require_human" && p.amount >= hardLimit) {
+    reasons.push(`金额 ${fmt(p.amount)} ${p.currency} ≥ 硬限 ${fmt(hardLimit)}——超此额度不走 Agent 通道，退线下双签`);
+    return { tier, reasons, verdict: "rejected" };
+  }
+  if (tier === "require_human") return { tier, reasons, verdict: "needs_human" };
+  return { tier, reasons, verdict: "passed" };
+}
+
+const $ = s => document.querySelector(s);
+const stage = $("#stage"), limitEl = $("#limit"), limitVal = $("#limit-val");
+const runBtn = $("#run"), resetBtn = $("#reset");
+
+let hardLimit = Number(limitEl.value);
+let decisions = [];
+/* 人工表态单独存档：重算裁决时不去猜上一轮状态，避免批过的草案被重复追问 */
+let answers = [];
+let running = false;
+let revision = 0;
+
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const beat = ms => wait(reduced ? 0 : ms);
+
+/* 链路图节点状态：idle / active / done */
+function markFlow(n, state) {
+  const nodes = document.querySelectorAll("#flow .node");
+  nodes.forEach((el, i) => {
+    if (i + 1 < n) el.dataset.state = "done";
+    else if (i + 1 === n) el.dataset.state = state;
+    else el.dataset.state = "idle";
+  });
+}
+
+/* 净头寸横条：零轴居中，左负右正，数值直接标在条端 */
+function posChart(rows, caption) {
+  const box = el("div", "pos");
+  const max = Math.max(...rows.map(r => Math.abs(r.net)));
+  rows.forEach(r => {
+    const row = el("div", "pos-row");
+    row.append(el("div", "pos-key", r.key));
+    const track = el("div", "pos-track");
+    const bar = el("div", `pos-bar ${r.net < 0 ? "is-neg" : "is-pos"}`);
+    bar.style.width = `${(Math.abs(r.net) / max) * 48}%`;
+    /* 数值放在零轴的对侧空白区：条再长也不会压住它，窄屏同样安全 */
+    const val = el("div", "pos-val", (r.net < 0 ? "−" : "+") + fmt0(Math.round(Math.abs(r.net))));
+    if (r.net < 0) {
+      val.style.left = "calc(50% + .45rem)";
+    } else {
+      val.style.right = "calc(50% + .45rem)";
+    }
+    track.append(bar, val);
+    row.append(track);
+    box.append(row);
+  });
+  const legend = el("div", "pos-legend");
+  legend.innerHTML =
+    `<span><i style="background:var(--jade)"></i>富余</span>` +
+    `<span><i style="background:var(--seal)"></i>缺口</span>`;
+  box.append(legend);
+  if (caption) box.append(el("p", "pos-cap", caption));
+  return box;
+}
+
+function lane(role, name, sub) {
+  const n = el("div", "lane reveal");
+  n.dataset.role = role;
+  n.append(el("p", "role", `${name} <span>${sub}</span>`));
+  stage.append(n);
+  return n;
+}
+
+function cardFor(p, i) {
+  const c = el("article", "card");
+  c.dataset.verdict = "pending";
+  c.dataset.index = String(i);
+  c.append(el("div", "card-top",
+    `<span class="card-kind">${p.kind}</span><span class="pill"></span>`));
+  c.append(el("h3", "card-title", p.title));
+  c.append(el("p", "card-why", p.why));
+  return c;
+}
+
+function paint(card, p, d) {
+  card.dataset.verdict = d.verdict;
+  const label = {
+    passed: "放行", needs_human: "待人工", rejected: "拒绝",
+    approved: "已批准", declined: "已驳回",
+  }[d.verdict];
+  card.querySelector(".pill").textContent = `${TIER_CN[d.tier]} · ${label}`;
+  card.querySelectorAll(".redlines, .disposal, .answered, .ask").forEach(n => n.remove());
+
+  if (d.reasons.length) {
+    const ul = el("ul", "redlines");
+    d.reasons.forEach(r => ul.append(el("li", null, r)));
+    card.append(ul);
+  }
+  if (d.verdict === "rejected") {
+    card.append(el("p", "disposal", "不进入执行队列，转线下审批流程"));
+  }
+}
+
+function askHuman(card, p, scroll = true) {
+  return new Promise(resolve => {
+    const box = el("div", "ask");
+    box.append(el("p", null, `批不批？${p.title}`));
+    const btns = el("div", "ask-btns");
+    const ok = el("button", "btn btn-ok", "批准");
+    const no = el("button", "btn btn-no", "驳回");
+    btns.append(ok, no);
+    box.append(btns);
+    card.append(box);
+    const pick = v => { box.remove(); resolve(v); };
+    ok.addEventListener("click", () => pick(true));
+    no.addEventListener("click", () => pick(false));
+    if (scroll) {
+      ok.focus({ preventScroll: true });
+      card.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+    }
+  });
+}
+
+function answeredNote(card, verdict) {
+  card.append(el("p", "answered", verdict === "approved" ? "人工答复：批准" : "人工答复：驳回"));
+}
+
+/* 五条草案的去向分段条——宽度即条数，颜色即结局，段内直接标数 */
+const SPLIT_KEYS = [
+  ["passed", "s-pass", "放行"], ["approved", "s-appr", "人工批准"],
+  ["needs_human", "s-wait", "待裁决"], ["declined", "s-decl", "人工驳回"],
+  ["rejected", "s-rej", "红线拒绝"],
+];
+
+function splitBar() {
+  const box = el("div");
+  box.append(el("div", "split"), el("div", "split-key"));
+  paintSplit(box);
+  return box;
+}
+
+function paintSplit(box) {
+  const bar = box.querySelector(".split");
+  const key = box.querySelector(".split-key");
+  if (!bar) return;
+  const count = v => decisions.filter(d => d.verdict === v).length;
+  bar.replaceChildren();
+  key.replaceChildren();
+  SPLIT_KEYS.forEach(([v, cls, label]) => {
+    const n = count(v);
+    if (!n) return;
+    const seg = el("div", cls, String(n));
+    seg.style.flexGrow = String(n);
+    seg.title = `${label} ${n} 条`;
+    bar.append(seg);
+    const k = el("span", null, `<i class="${cls}"></i>${label} ${n}`);
+    k.querySelector("i").style.background =
+      getComputedStyle(seg).backgroundColor;
+    k.querySelector("i").style.opacity = getComputedStyle(seg).opacity;
+    key.append(k);
+  });
+}
+
+/* 分段条 + 「还有几条等你裁决」 */
+function updateTally() {
+  const split = stage.querySelector(".split");
+  if (split) paintSplit(split.parentElement);
+  if (!split) return;
+  const waiting = decisions.filter(d => d.verdict === "needs_human").length;
+  let note = stage.querySelector(".waiting");
+  if (waiting) {
+    if (!note) {
+      note = el("p", "waiting");
+      split.parentElement.after(note);
+    }
+    note.textContent = `还有 ${waiting} 条在等你裁决——阈值放宽后，它们从「拒绝」退回到了人工通道。`;
+  } else if (note) {
+    note.remove();
+  }
+}
+
+async function play() {
+  running = true;
+  runBtn.disabled = true;
+  runBtn.textContent = "协作进行中…";
+  limitEl.disabled = true;
+  stage.replaceChildren();
+  decisions = [];
+  answers = PROPOSALS.map(() => null);
+
+  /* 1 · 分析 */
+  markFlow(1, "active");
+  const l1 = lane("analyst", "现金流分析 Agent", "MCP 只读工具");
+  const tools = el("ul", "tools");
+  ANALYSIS.tools.forEach(t => tools.append(el("li", null, t)));
+  l1.append(tools);
+  l1.append(el("p", "said", `未来 4 周净头寸（余额 − 预测流出），截至 ${ANALYSIS.asOf}：`));
+  l1.append(posChart(POSITION.byCurrency,
+    "三个币种里只有 <b>CNY 是负的</b>——缺口 11,880。钱不是不够，是没在需要它的地方。"));
+  await beat(560);
+  const drill = el("div", "reveal");
+  drill.append(el("p", "said", "把 CNY 拆到主体看，缺口的位置就清楚了："));
+  drill.append(posChart(POSITION.cnyByEntity,
+    "<b>HK Co 富余 80,000，SG Co 缺 91,880</b>。同币种先内部互补，补完仍差 11,880，才需要购汇。"));
+  l1.append(drill);
+  await beat(420);
+  l1.append(el("p", "said reveal", ANALYSIS.say));
+
+  /* 2 · 建议 */
+  await beat(560);
+  markFlow(2, "active");
+  const l2 = lane("advisor", "调拨建议 Agent", "指标层产物");
+  l2.append(el("p", "said", `顺着上面的缺口，产出 ${PROPOSALS.length} 条草案，全部尚未生效，逐条待批。`));
+
+  /* 3 · 审批 */
+  await beat(460);
+  markFlow(3, "active");
+  const l3 = lane("gate", "人工审批 Gate", `硬限 ${fmt0(hardLimit)}`);
+
+  for (let i = 0; i < PROPOSALS.length; i++) {
+    const p = PROPOSALS[i];
+    const card = cardFor(p, i);
+    card.classList.add("reveal");
+    l3.append(card);
+    await beat(300);
+
+    const d = judge(p, hardLimit);
+    if (d.verdict === "needs_human") {
+      paint(card, p, d);
+      const ok = await askHuman(card, p);
+      answers[i] = ok;
+      d.verdict = ok ? "approved" : "declined";
+      paint(card, p, d);
+      answeredNote(card, d.verdict);
+    } else {
+      paint(card, p, d);
+    }
+    decisions.push(d);
+    await beat(260);
+  }
+
+  /* 4 · 汇总 */
+  await beat(360);
+  markFlow(3, "done");
+  const l4 = lane("orch", "编排器", "汇总");
+  l4.append(splitBar());
+  l4.append(el("p", "closing", "全程只读：这条链路上没有任何付款执行工具，Agent 手上没有这把枪。"));
+
+  running = false;
+  runBtn.textContent = "已跑完这一轮";
+  resetBtn.hidden = false;
+  limitEl.disabled = false;
+}
+
+/* 硬限改动：跑完后实时重算，未开跑时只更新读数 */
+function relabel() {
+  hardLimit = Number(limitEl.value);
+  limitVal.textContent = fmt0(hardLimit);
+  if (running || !decisions.length) return;
+
+  const gateLane = stage.querySelector('.lane[data-role="gate"]');
+  if (gateLane) gateLane.querySelector(".role span").textContent = `硬限 ${fmt0(hardLimit)}`;
+
+  const round = ++revision;  /* 拖动很密集：只有最后一轮的异步回调算数 */
+
+  decisions = PROPOSALS.map((p, i) => {
+    const card = stage.querySelector(`.card[data-index="${i}"]`);
+    const d = judge(p, hardLimit);
+    /* 红线优先于人工：撞上硬限就是拒绝，哪怕刚才批过。
+       没撞线的，沿用存档里那次表态，不要因为拖了下滑块就重新问一遍。 */
+    if (d.verdict === "needs_human" && answers[i] != null) {
+      d.verdict = answers[i] ? "approved" : "declined";
+    }
+    if (!card) return d;
+
+    paint(card, p, d);
+    if (d.verdict === "approved" || d.verdict === "declined") {
+      answeredNote(card, d.verdict);
+    } else if (d.verdict === "needs_human") {
+      /* 阈值放宽把它从「拒绝」推回人工通道：就地给出按钮，别让人重跑一轮 */
+      askHuman(card, p, false).then(ok => {
+        if (round !== revision) return;
+        answers[i] = ok;
+        d.verdict = ok ? "approved" : "declined";
+        paint(card, p, d);
+        answeredNote(card, d.verdict);
+        updateTally();
+      });
+    }
+    return d;
+  });
+
+  updateTally();
+}
+
+limitEl.addEventListener("input", relabel);
+runBtn.addEventListener("click", () => { if (!running) play(); });
+resetBtn.addEventListener("click", () => {
+  stage.replaceChildren();
+  decisions = [];
+  answers = [];
+  markFlow(0, "idle");
+  resetBtn.hidden = true;
+  runBtn.disabled = false;
+  runBtn.textContent = "开始这一轮协作";
+});
+relabel();
+</script>
