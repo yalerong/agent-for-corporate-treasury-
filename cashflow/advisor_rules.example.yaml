@@ -43,7 +43,12 @@ rules:
   - id: R-005
     type: weekly_inflow             # 周度自然回流（保守估 low，先抵扣再谈缺口）
     status: approved
-    params: {currency: USDT, low: 100000, high: 150000}
+    params:
+      currency: USDT
+      low: 100000                   # 保守估：只作滚动覆盖，不作硬截止日的资金来源
+      high: 200000
+      median: 150000                # 建议用余额差分按周实测后回填，别只靠口授
+      caveat: "提现是人工节奏非自然到账，存在静默周——硬截止日付款不得赌回流"
     statement: "三个项目每周提现回流 hub 约 10-15 万"
     source: "台账序列核实示例"
     effective: "2026-08-02"
@@ -150,3 +155,65 @@ rules:
       质检据此区分：归一后同键=同一账户（静默处理）；键不同=真新账户（报警）
     source: "示例"
     effective: "2026-08-02"
+
+  # ============ 2026-08 第二次实战复盘新增的规则类型（形状示例，化名）============
+
+  - id: R-014
+    type: payment_path              # 主体级付款路径：正常通道 + 受限时的代付降级链
+    status: approved
+    params:
+      entity: "MX BETA"
+      normal: "主体自己的本地银行账户直接付（多币种皆可）"
+      fallback_local_ccy: "支付渠道控台代付"
+      fallback_usd: "指定香港主体代付（有优先级），记关联方往来"
+      note: "非急单可等渠道提现补池后再付，不必立即调拨"
+    statement: >-
+      主体的常规付款账户可能临时受限（银行风控/合规审查）——规则里同时登记
+      正常路径和降级路径，缺口路由时先判账户可用性再选路径
+    source: "示例：账户受限期的实战定式"
+    effective: "2026-08-11"
+
+  - id: R-015
+    type: payment_path
+    status: approved
+    params:
+      entity: "MX EPSILON"
+      path: "资金池 → 主体自己的银行账户 → 对外支付（固定两跳，不从池直付）"
+    statement: "有的主体付款定式是两跳：先从池拨到自己账户、再对外付——直付会打乱对账口径"
+    source: "示例"
+    effective: "2026-08-11"
+
+  - id: R-016
+    type: funding_route             # 缺口出资定式：谁缺钱找谁、什么形式
+    status: approved
+    params: {entity: "HK ZETA", funder: "HK GAMMA", form: "拆借"}
+    statement: >-
+      主体缺口的默认出资方与形式（拆借/划转/代付）。与 conduit_entity 并读：
+      通道主体的出资方按当期轮换，此类规则只登记当前有效口径，出资方变了就更新
+    source: "示例"
+    effective: "2026-08-11"
+
+  - id: R-017
+    type: funding_route
+    status: approved
+    params:
+      entities: ["HK GAMMA", "HK DELTA"]
+      source: "支付渠道提现（USD 与稳定币皆有，提给哪个主体人工决定）"
+      covers: "该侧账单代付，一般足够 cover"
+    statement: >-
+      代付主体的弹药来源=渠道提现，提现节奏人工操控——代付主体的待付
+      不构成真缺口，等提现入账即可；只有硬截止日赶不上提现节奏才动后备
+    source: "示例：单据核对实证"
+    effective: "2026-08-11"
+
+  - id: R-018
+    type: fx_payment_capability     # 账户级换汇出账能力
+    status: approved
+    params:
+      account: "ENTITY_SOMEBANK_USD_0001"
+      capability: "出账时支付换汇：银行支持从 USD 账户直接出其他币种，出账时换汇"
+    statement: >-
+      个别银行账户支持付款时换汇——外币小额付款不必先调拨同币种资金，
+      直接从该户出账即可。此能力按账户登记，不可推广到同银行其他账户
+    source: "示例"
+    effective: "2026-08-11"
