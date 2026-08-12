@@ -183,6 +183,21 @@ rules:
     source: "示例"
     effective: "2026-08-11"
 
+  - id: R-019
+    type: payment_path              # 场景级路径：习惯首选 + 可行备选（区别于 R-014 的受限降级）
+    status: approved
+    params:
+      entity: "SG THETA"
+      scenario: "某类固定场景付款（如投资人利息兑付）"
+      preferred: "项目本币账户 → 同名划转 → 换汇通道 → 换汇支付外币（习惯首选，汇率优）"
+      alternative: "主体外币账户直接付（可行，非首选）"
+    statement: >-
+      同一场景多条可行路径时，登记用户习惯为 preferred、其余为 alternative——
+      引擎按首选出建议，首选资金不足或赶截止日才提备选。
+      与 R-014 语义区分：normal/fallback 是"账户受限的降级"，preferred/alternative 是"都可行的偏好"
+    source: "示例"
+    effective: "2026-08-12"
+
   - id: R-016
     type: funding_route             # 缺口出资定式：谁缺钱找谁、什么形式
     status: approved
