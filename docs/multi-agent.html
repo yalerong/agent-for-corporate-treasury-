@@ -406,12 +406,52 @@ footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
 :root[data-theme="light"]{--grid:#E9E5D6}
 body{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:48px 48px;background-position:-1px -1px}
 ::selection{background:rgba(193,95,60,.20)}
+
+/* —— 2026-08-24 侧边导航（仿 factor-demo 深色侧栏）—— */
+html{scroll-behavior:smooth}
+#demo,#learning-loop,#design-map,#local-run{scroll-margin-top:64px}
+.sidenav{position:fixed;left:0;top:0;bottom:0;width:216px;z-index:60;display:none;flex-direction:column;
+  background:#2B2823;border-right:1px solid rgba(255,255,255,.08)}
+.sidenav .brand{padding:22px 20px 16px;border-bottom:1px solid rgba(255,255,255,.09)}
+.sidenav .brand b{display:flex;align-items:center;gap:8px;color:#F0EBDD;font-size:13px;letter-spacing:.14em;font-family:var(--mono)}
+.brand-dot{width:9px;height:9px;border-radius:50%;background:#DC8159;box-shadow:0 0 0 3px rgba(220,129,89,.22)}
+.sidenav .brand p{margin:7px 0 0;font-size:11px;color:#8C8574;line-height:1.5}
+.sidenav nav{padding:12px 10px;display:flex;flex-direction:column;gap:2px}
+.sidenav nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
+  color:#B5AE9C;text-decoration:none;font-size:13px;transition:background .15s,color .15s}
+.sidenav nav a .ic{width:16px;text-align:center;color:#8C8574}
+.sidenav nav a small{margin-left:auto;font-family:var(--mono);font-size:10px;color:#6E6855;letter-spacing:.08em}
+.sidenav nav a:hover{background:rgba(255,255,255,.05);color:#E8E4D9}
+.sidenav nav a.active{background:rgba(220,129,89,.15);color:#F0EBDD}
+.sidenav nav a.active .ic{color:#DC8159}
+.sidenav nav a.active small{color:#C79A45}
+.side-foot{margin-top:auto;padding:16px 20px;border-top:1px solid rgba(255,255,255,.09);
+  font-family:var(--mono);font-size:10.5px;color:#8C8574;line-height:1.9}
+.topnav{display:none;position:sticky;top:0;z-index:60;gap:6px;overflow-x:auto;
+  background:var(--card);border-bottom:1px solid var(--rule);padding:10px 14px;box-shadow:var(--shadow)}
+.topnav a{flex:0 0 auto;padding:5px 12px;border-radius:999px;border:1px solid var(--rule);
+  color:var(--ink-2);text-decoration:none;font-size:12px}
+.topnav a.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+@media (min-width:1180px){.sidenav{display:flex}body{padding-left:216px}}
+@media (max-width:1179.98px){.topnav{display:flex}}
 </style>
 </head>
 <body>
 
+<aside class="sidenav" aria-label="页面导航">
+  <div class="brand"><b><span class="brand-dot"></span>TREASURY · AGENT</b><p>多智能体资金调拨 demo / OFFLINE</p></div>
+  <nav>
+    <a href="#demo" data-nav><span class="ic">▦</span><span>协作演示</span><small>DEMO</small></a>
+    <a href="#learning-loop" data-nav><span class="ic">⌁</span><span>学习环</span><small>RULES</small></a>
+    <a href="#design-map" data-nav><span class="ic">⚙</span><span>设计对照</span><small>DOCS</small></a>
+    <a href="#local-run" data-nav><span class="ic">◎</span><span>本地复现</span><small>CLI</small></a>
+  </nav>
+  <div class="side-foot">OFFLINE · 无需 API Key<br>规则 40 条 · 全部人工裁决入库<br>判定与金额永远由代码执行</div>
+</aside>
+<nav class="topnav" aria-label="页面导航"><a href="#demo" data-nav>协作演示</a><a href="#learning-loop" data-nav>学习环</a><a href="#design-map" data-nav>设计对照</a><a href="#local-run" data-nav>本地复现</a></nav>
+
 <div class="wrap">
-  <header>
+  <header id="demo">
     <p class="eyebrow">Corporate Treasury Agent</p>
     <h1>三个 Agent 分工干活，<br>到红线处停下来找人</h1>
     <p class="lede">
@@ -550,7 +590,7 @@ body{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gr
 
   <hr class="divider">
 
-  <section>
+  <section id="design-map">
     <h2>页面上的每一块，对应设计文档的哪一章</h2>
     <div class="scroll-x">
       <table class="map">
@@ -567,7 +607,7 @@ body{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gr
 
   <hr class="divider">
 
-  <section>
+  <section id="local-run">
     <h2>本地跑一模一样的一轮</h2>
     <pre><b>python demo/multi_agent.py</b>          # 暂停处敲 y/n
 <b>python demo/multi_agent.py --auto</b>   # 非交互，CI 用</pre>
@@ -973,6 +1013,23 @@ resetBtn.addEventListener("click", () => {
   runBtn.textContent = "开始这一轮协作";
 });
 relabel();
+</script>
+
+<script>
+(function(){
+  var ids=["demo","learning-loop","design-map","local-run"];
+  var links=[].slice.call(document.querySelectorAll("[data-nav]"));
+  var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean);
+  function setActive(id){links.forEach(function(a){a.classList.toggle("active",a.getAttribute("href")==="#"+id)})}
+  function onScroll(){
+    var y=window.scrollY+Math.round(window.innerHeight*0.28),cur=secs[0];
+    secs.forEach(function(s){if(s.getBoundingClientRect().top+window.scrollY<=y)cur=s});
+    if(cur)setActive(cur.id);
+  }
+  window.addEventListener("scroll",onScroll,{passive:true});
+  window.addEventListener("resize",onScroll);
+  onScroll();
+})();
 </script>
 </body>
 </html>
