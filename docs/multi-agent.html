@@ -1,6 +1,10 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>多智能体协作 · 资金调拨审批 demo</title>
+<meta name="robots" content="noindex,nofollow,noarchive">
 <meta name="description" content="三个 Agent 分工协作产出资金调拨建议，每一条会动钱的建议都必须过审批红线。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23B23A32'/%3E%3Crect x='9' y='9' width='14' height='14' rx='1.5' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E">
 
@@ -329,6 +333,65 @@ footer a { color: var(--accent); text-decoration: none; border-bottom: 1px solid
 footer a:hover { border-bottom-color: var(--accent); }
 footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ---------- 学习环 ---------- */
+.llm-foot a { color: var(--accent); text-underline-offset: .18em; }
+.learning-intro { margin: -.15rem 0 1rem; color: var(--ink-2); font-size: .84rem; line-height: 1.7; }
+.growth-track {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
+  margin: 1rem 0 1.2rem; position: relative;
+}
+.growth-track::before {
+  content: ""; position: absolute; left: 12%; right: 12%; top: .38rem;
+  height: 2px; background: var(--rule);
+}
+.growth-step { position: relative; z-index: 1; text-align: center; padding: 0 .25rem; }
+.growth-dot {
+  display: block; width: .78rem; height: .78rem; margin: 0 auto .45rem;
+  border-radius: 50%; border: 2px solid var(--card); background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.growth-step b { display: block; font-size: .75rem; color: var(--ink); }
+.growth-step span { display: block; margin-top: .18rem; font-size: .68rem; line-height: 1.45; color: var(--ink-3); }
+.growth-note {
+  margin: 0 0 1rem; padding: .65rem .75rem; border-left: 3px solid var(--accent);
+  background: var(--accent-soft); color: var(--ink-2); font-size: .78rem; line-height: 1.6;
+}
+.mistake-grid { display: grid; grid-template-columns: 1fr; gap: .65rem; }
+.mistake {
+  --mistake-tone: var(--ink-3); margin: 0; padding: .85rem;
+  border: 1px solid var(--rule); border-top: 3px solid var(--mistake-tone);
+  border-radius: 2px; background: var(--card); box-shadow: var(--shadow);
+}
+.mistake[data-tone="danger"] { --mistake-tone: var(--seal); }
+.mistake[data-tone="warning"] { --mistake-tone: var(--amber); }
+.mistake h3 { margin: .35rem 0 .55rem; font-size: .9rem; line-height: 1.45; }
+.mistake-type {
+  display: inline-block; font-family: var(--mono); font-size: .63rem; font-weight: 700;
+  letter-spacing: .05em; color: var(--mistake-tone); text-transform: uppercase;
+}
+.mistake dl { margin: 0; }
+.mistake dt { margin-top: .45rem; font-size: .69rem; font-weight: 700; color: var(--ink-3); }
+.mistake dd { margin: .12rem 0 0; color: var(--ink-2); font-size: .76rem; line-height: 1.58; }
+.mistake .rule-id { color: var(--accent); font-family: var(--mono); font-weight: 700; }
+.life-title { margin: 1.2rem 0 .65rem; font-size: .9rem; }
+.rule-life { display: grid; grid-template-columns: 1fr; gap: .45rem; }
+.life-step {
+  position: relative; padding: .65rem .7rem; border: 1px solid var(--rule);
+  background: var(--card); border-radius: 2px;
+}
+.life-step b { display: block; font-size: .78rem; color: var(--ink); }
+.life-step span { display: block; margin-top: .22rem; font-size: .7rem; line-height: 1.5; color: var(--ink-3); }
+.life-step:not(:last-child)::after {
+  content: "↓"; position: absolute; left: 50%; bottom: -.62rem; z-index: 2;
+  color: var(--accent); font-family: var(--mono);
+}
+@media (min-width: 34rem) {
+  .mistake-grid { grid-template-columns: 1fr 1fr; }
+  .mistake:last-child { grid-column: 1 / -1; }
+  .rule-life { grid-template-columns: repeat(5, 1fr); gap: .35rem; }
+  .life-step:not(:last-child)::after { content: "→"; left: auto; right: -.32rem; bottom: auto; top: 50%; transform: translateY(-50%); }
+}
+
 .reveal { opacity: 0; transform: translateY(6px); animation: rise .38s ease forwards; }
 @keyframes rise { to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
@@ -336,6 +399,8 @@ footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
   * { transition: none !important; }
 }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header>
@@ -383,7 +448,7 @@ footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
         </div>
       </div>
       <p class="llm-foot">
-        这是刻意的分工：<b>LLM 总结规律，代码执行规律</b>。模型不可用、网络断了、Key 过期，
+        这是刻意的分工：<a href="#learning-loop"><b>LLM 总结规律，代码执行规律</b></a>。模型不可用、网络断了、Key 过期，
         判定链路照常出结果——差别只是话说得干不干瘪。
       </p>
     </div>
@@ -412,6 +477,68 @@ footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; 
   </section>
 
   <div class="stage" id="stage" aria-live="polite"></div>
+
+  <hr class="divider">
+
+  <section id="learning-loop" aria-labelledby="learning-title">
+    <h2 id="learning-title">规则是怎么长出来的</h2>
+    <p class="learning-intro">每周一轮真实业务复盘，人逐条挑错，裁决入库带出处。模型负责发现候选模式，规则是否进入资金计算只由人决定。</p>
+
+    <div class="growth-track" aria-label="规则库的四轮演进">
+      <div class="growth-step"><span class="growth-dot"></span><b>首轮实战</b><span>形成初始规则沉淀</span></div>
+      <div class="growth-step"><span class="growth-dot"></span><b>口授增补</b><span>人的业务裁决逐条入库</span></div>
+      <div class="growth-step"><span class="growth-dot"></span><b>周度复盘</b><span>每周实战对流水挑错，错处修订成新规则</span></div>
+      <div class="growth-step"><span class="growth-dot"></span><b>当前核对</b><span>规则库 40 条 approved（R-001 ~ R-037）</span></div>
+    </div>
+    <p class="growth-note">这里只展示可核验的当前值。没有可靠的跨轮修正次数，就不画“越来越准”的折线；学习证据来自每条规则的人工裁决与出处。</p>
+
+    <div class="mistake-grid">
+      <article class="mistake" data-tone="warning">
+        <span class="mistake-type">口径过严 → 系统性高估</span>
+        <h3>把项目自身成本误报成外部资金缺口</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>把 PJA 项目下四个主体的平台费与税费全部报为资金缺口。</dd><dt>实际情况</dt><dd>费用本身属于项目成本，各主体项目户余额足够自足；误报占当周全部资金需求的 31%。</dd><dt>人的裁决</dt><dd>计划行所属项目与账户项目标签一致时，该项目户即为合法弹药。<span class="rule-id">R-031 同族</span></dd></dl>
+      </article>
+
+      <article class="mistake">
+        <span class="mistake-type">业务常识缺失</span>
+        <h3>集团内往来不必为币种去购汇</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>某主体需支付数百万 CNY 咨询服务费，而 CNY 余额近乎为零，于是建议从美元账户购汇。</dd><dt>实际情况</dt><dd>收款方是集团内另一主体，可按约定汇率入账挂往来。</dd><dt>人的裁决</dt><dd>收款方属集团内时不购汇，直接使用可用币种。<span class="rule-id">R-028</span></dd></dl>
+      </article>
+
+      <article class="mistake" data-tone="danger">
+        <span class="mistake-type">危险误判 · 资金安全</span>
+        <h3>“未见流水”不等于“未付款”</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>计划行匹配不到对应付款，便判为未付并进入待付清单。</dd><dt>实际情况</dt><dd>可能是合并支付，也可能是审批已提交但尚未到付款节点；误判会导致重复出款。</dd><dt>人的裁决</dt><dd>付款前按审批编号查流程节点，前两种不得判欠款。<span class="rule-id">R-030</span></dd></dl>
+      </article>
+
+      <article class="mistake" data-tone="warning">
+        <span class="mistake-type">归纳过度 · AI 自我批评</span>
+        <h3>把同期发生误认为固定因果</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>从单周记录归纳出“固定走渠道 A 换汇，不占用 USDT 池”。</dd><dt>实际情况</dt><dd>渠道 A 换汇付本币与 USDT 池支付只是两条同期发生、互相独立的腿。</dd><dt>人的裁决</dt><dd>按币种拆成独立资金腿，弹药来源可替换而非固定路径。样本量为 1 时，候选不得直接进计算。<span class="rule-id">R-032</span></dd></dl>
+      </article>
+
+      <article class="mistake">
+        <span class="mistake-type">结构性知识缺失 · 账户性质</span>
+        <h3>账上余额不一定是自己的钱</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>按账户余额计算可动用资金，把某主体账上的全部余额计入弹药。</dd><dt>实际情况</dt><dd>该账户是受托专用户，资金属于外部受托方，绝不可动用。</dd><dt>人的裁决</dt><dd>受托专用户从可动用口径中整体剔除，主体缺口改由关联方拆借解决。<span class="rule-id">R-022 / R-023</span></dd></dl>
+      </article>
+
+      <article class="mistake" data-tone="warning">
+        <span class="mistake-type">时间错觉 · 排期</span>
+        <h3>「理财到期」不等于「资金可用」</h3>
+        <dl><dt>引擎当时怎么做</dt><dd>把定存到期日当作资金可用日，据此判断"账单日的缺口已被到期资金覆盖"。</dd><dt>实际情况</dt><dd>到期当天，数百万美元随即被滚入新一期定存——"到期"与"留在活期"是两回事，而账单日恰好比下一个到期日早一天。</dd><dt>人的裁决</dt><dd>理财到期进"按日可动用"模型，且必须读台账里的"是否续存"标记；到期即滚存的不算可用。<span class="rule-id">R-034</span></dd></dl>
+      </article>
+    </div>
+
+    <h3 class="life-title">一条规则的生命周期：以“不购汇”为例</h3>
+    <div class="rule-life" aria-label="规则从候选到执行的五个步骤">
+      <div class="life-step"><b>模型归纳候选</b><span>模型能做的只有“看出模式”</span></div>
+      <div class="life-step"><b>标 provisional</b><span>不进任何计算，错了也不会算进钱里</span></div>
+      <div class="life-step"><b>人工裁决</b><span>人是唯一能把候选变成规则的角色</span></div>
+      <div class="life-step"><b>approved 入库</b><span>每条规则钉出处，可按版本重放审计</span></div>
+      <div class="life-step"><b>下一轮生效</b><span>规则由代码执行，不由模型执行</span></div>
+    </div>
+  </section>
 
   <hr class="divider">
 
@@ -839,3 +966,5 @@ resetBtn.addEventListener("click", () => {
 });
 relabel();
 </script>
+</body>
+</html>
