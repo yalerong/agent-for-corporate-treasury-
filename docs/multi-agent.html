@@ -434,6 +434,18 @@ html{scroll-behavior:smooth}
 .topnav a.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 @media (min-width:1180px){.sidenav{display:flex}body{padding-left:216px}}
 @media (max-width:1179.98px){.topnav{display:flex}}
+
+/* —— 2026-08-24 分界感：内容块=独立纸页卡片，demo 留在网格纸上当封面 —— */
+.divider{display:none}
+.wrap{max-width:46rem}
+.page-sec{background:var(--card);border:1px solid var(--rule);border-top:3px solid var(--accent);
+  border-radius:14px;padding:2.1rem 2.3rem 2.3rem;box-shadow:var(--shadow);margin:4.2rem 0}
+.page-sec h2{margin-top:.1rem}
+.sec-no{display:flex;align-items:center;gap:.7rem;margin:0 0 1rem;
+  font-family:var(--mono);font-size:.78rem;letter-spacing:.2em;color:var(--accent);font-weight:600}
+.sec-no span{color:var(--ink-3);letter-spacing:.14em;font-weight:400}
+.sec-no::after{content:"";flex:1;height:1px;background:var(--rule)}
+@media (max-width:640px){.page-sec{padding:1.4rem 1.1rem 1.5rem;margin:2.8rem 0;border-radius:10px}}
 </style>
 </head>
 <body>
@@ -528,7 +540,8 @@ html{scroll-behavior:smooth}
 
   <hr class="divider">
 
-  <section id="learning-loop" aria-labelledby="learning-title">
+  <section id="learning-loop" class="page-sec" aria-labelledby="learning-title">
+    <p class="sec-no">02 · 学习环 <span>RULES</span></p>
     <h2 id="learning-title">规则是怎么长出来的</h2>
     <p class="learning-intro">每周一轮真实业务复盘，人逐条挑错，裁决入库带出处。模型负责发现候选模式，规则是否进入资金计算只由人决定。</p>
 
@@ -590,7 +603,8 @@ html{scroll-behavior:smooth}
 
   <hr class="divider">
 
-  <section id="design-map">
+  <section id="design-map" class="page-sec">
+    <p class="sec-no">03 · 设计对照 <span>DOCS</span></p>
     <h2>页面上的每一块，对应设计文档的哪一章</h2>
     <div class="scroll-x">
       <table class="map">
@@ -607,7 +621,8 @@ html{scroll-behavior:smooth}
 
   <hr class="divider">
 
-  <section id="local-run">
+  <section id="local-run" class="page-sec">
+    <p class="sec-no">04 · 本地复现 <span>CLI</span></p>
     <h2>本地跑一模一样的一轮</h2>
     <pre><b>python demo/multi_agent.py</b>          # 暂停处敲 y/n
 <b>python demo/multi_agent.py --auto</b>   # 非交互，CI 用</pre>
