@@ -49,3 +49,9 @@ TASK_BRIEF.md
 PLAN-*.md
 业务知识-*.md
 调研/
+
+# wrangler 本地部署缓存（含 Cloudflare account id 与账号名，不进仓库）
+.wrangler/
+
+# 演示站构建产物
+_site/
