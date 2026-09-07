@@ -55,3 +55,6 @@ PLAN-*.md
 
 # 演示站构建产物
 _site/
+
+# Lark 用户身份 token 缓存（fetch_lark.py / oauth_server.py）
+cashflow/user_token.json
