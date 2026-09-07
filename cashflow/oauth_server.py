@@ -10,6 +10,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -57,7 +58,5 @@ if __name__ == "__main__":
     u = urllib.parse.urlparse(REDIRECT)
     srv = HTTPServer((u.hostname or "127.0.0.1", u.port or 3000), Handler)
     print(f"listening on :{u.port or 3000}", flush=True)
-    try:
+    with suppress(KeyboardInterrupt):
         srv.serve_forever()
-    except KeyboardInterrupt:
-        pass
