@@ -105,6 +105,38 @@ LangGraph 多智能体框架：意图分类路由、双轨知识库 RAG（行业
 > **可点的网页版**：[docs/multi-agent.html](docs/multi-agent.html)——自包含单文件，浏览器直接打开即可。
 > 同一轮协作的重放，审批处真的停下来等你点批准/驳回，还能拖动审批硬限看红线实时重算
 > （裁决逻辑与 `policy.review_tier` 对拍一致；无外部依赖，可直接托管到任意静态站点）。
+>
+> **在线版**：<https://treasury-demo.pages.dev/> —— 就是这张页面。
+> **这个链接是公开的，没有任何访问控制**，拿到就能打开；页里数据全部合成，不含真实主体与流水。
+> `robots.txt` 与 `X-Robots-Tag` 只让它不进搜索引擎，那不是访问控制。
+
+### 重新部署演示站
+
+```bash
+python scripts/build_site.py          # 拼出 _site/
+npx wrangler pages deploy _site --project-name treasury-demo --branch main
+```
+
+`scripts/build_site.py` 存在的理由不是"构建"（页面是自包含单文件），是两件手工做不可靠的事：
+
+1. **线上首页是 `docs/multi-agent.html`，不是 `docs/index.html`**——部署时要改名，靠记的话迟早传错一张页面上去；
+2. **别整目录传**——`docs/data.json` 是给另一张（当前没上线的）页用的，不该出现在公网上；
+   `_headers` 反过来必须传上去，漏掉它安全头就静默消失、页面照常打开，不看响应头发现不了。
+
+`docs/_headers` 是给 Cloudflare Pages 读的响应头。这个站纯静态、无后端、数据全合成，
+所以这几条挡的不是数据泄露，是三件具体的事：`frame-ancestors 'none'`（别人把演示站嵌进
+自己页面里做点击劫持）、`connect-src 'self'`（页面即便被注入也发不出外部请求）、
+`X-Robots-Tag: noindex`（`robots.txt` 只管爬虫抓不抓，这个头把 noindex 标到每个响应上）。
+`script-src`/`style-src` 保留 `'unsafe-inline'`——这是自包含单文件页，脚本样式全是内联的。
+
+`tests/test_docs_site.py` 钉住这些：产物文件清单、首页确实取自 `multi-agent.html`、
+`data.json` 不上线、`_headers` 规则行是 `/*`、页面没引 CSP 放行不了的东西。
+**最后一条是关键**：本地双击打开 HTML 不发 CSP，加个 CDN 脚本在本地一切正常，线上才发现被挡。
+
+**部署前先验证的做法**：先 `--branch <临时名>` 部一个 preview，`curl -D -` 确认头和内容，
+验完 `npx wrangler pages deployment delete <id> --project-name treasury-demo -f` 删掉，
+再部生产。另外每次部署都会留一个永久公开的 `<hash>.pages.dev`，**部完顺手把上一版删掉**，
+只保留当前线上那一个。
 
 ```bash
 pip install -r requirements.txt
