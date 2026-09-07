@@ -21,6 +21,8 @@ jobs:
       - name: Tests
         # confcutdir 隔断 tests/conftest.py（它 import app 依赖，本作业不安装）
         run: pytest tests/cashflow -q --confcutdir=tests/cashflow
+      - name: Docs-site deployment checks
+        run: pytest tests/test_docs_site.py -q --noconftest
 
   app:
     name: app full tests (observing)

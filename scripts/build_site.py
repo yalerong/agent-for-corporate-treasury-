@@ -24,6 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+DEFAULT_OUTPUT = ROOT / "_site"
 
 # 部署清单：(仓库里的文件, 部署后的名字)。
 # 加条目要同时想清楚它该不该被公网看见。
@@ -41,14 +42,14 @@ def guard_output_dir(out: Path) -> None:
     `python scripts/build_site.py docs` 会删掉演示页源文件本身，
     这个参数看着挺自然，不能靠使用者小心。
     """
-    protected = {ROOT, DOCS, ROOT / "app", ROOT / "cashflow", ROOT / "scripts",
-                 ROOT / "tests", ROOT / ".git"}
-    if out in protected:
-        raise SystemExit(f"拒绝：{out} 是源目录，构建会先删空它")
+    if out == DEFAULT_OUTPUT:
+        return
     if out == Path(out.anchor):
         raise SystemExit(f"拒绝：{out} 是盘符/根目录")
-    if ROOT.is_relative_to(out):
-        raise SystemExit(f"拒绝：{out} 包含着仓库本身，删它会删掉源码")
+    if out.is_relative_to(ROOT):
+        raise SystemExit(f"拒绝：{out} 是仓库内的路径，不能作为构建输出")
+    if out.exists():
+        raise SystemExit(f"拒绝：{out} 已存在，只能重建 {DEFAULT_OUTPUT}")
 
 
 def check_page(html: str) -> None:
@@ -56,8 +57,29 @@ def check_page(html: str) -> None:
     # CSP 只放行同源，页面引到任何外部资源都会被浏览器静默挡掉。
     # 本地直接双击打开 HTML 时不发 CSP，所以这类回归在本地看不出来。
     external = set()
-    for match in re.finditer(r"""(?:src)\s*=\s*["'](https?://[^"'/]+)""", html):
-        external.add(match.group(1))
+    external_url = r"(?:(?:https?):)?//[^\s\"'<>`]+"
+
+    def find_urls(pattern: str) -> None:
+        external.update(match.group("url") for match in re.finditer(pattern, html, re.IGNORECASE))
+
+    # src and srcset load resources from every element that supports them.
+    find_urls(rf"\bsrc(?:set)?\s*=\s*[\"']?(?P<url>{external_url})")
+    # href is only resource-bearing on these elements; normal links may navigate away
+    # without violating this site's resource CSP.
+    find_urls(
+        rf"<(?:link|base|use|image|feimage)\b[^>]*\bhref\s*=\s*[\"']?(?P<url>{external_url})"
+    )
+    # Inline and embedded stylesheet URLs are subject to style/img/font CSP directives.
+    find_urls(rf"\burl\(\s*[\"']?(?P<url>{external_url})")
+    find_urls(rf"@import\s+[\"'](?P<url>{external_url})")
+    # Literal network/module URLs in browser APIs are subject to connect-src or script-src.
+    find_urls(
+        rf"\b(?:fetch|import|importScripts|sendBeacon)\s*\(\s*[\"'](?P<url>{external_url})"
+    )
+    find_urls(
+        rf"\bnew\s+(?:Worker|SharedWorker)\s*\(\s*[\"'](?P<url>{external_url})"
+    )
+    find_urls(rf"\bimport\s*[\"'](?P<url>{external_url})")
     if external:
         raise SystemExit(
             "演示页引了外部资源，CSP 只放行同源，部署上去会被静默挡掉：\n  "
@@ -80,7 +102,7 @@ def main() -> int:
 
     check_page((DOCS / "multi-agent.html").read_text(encoding="utf-8"))
 
-    if out.exists():
+    if out == DEFAULT_OUTPUT and out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
     for src, dst in FILES:

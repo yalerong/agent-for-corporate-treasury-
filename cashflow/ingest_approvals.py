@@ -24,6 +24,15 @@ def parse_hours(s) -> float | None:
     return round(m.get("d", 0) * 24 + m.get("h", 0) + m.get("m", 0) / 60 + m.get("s", 0) / 3600, 2)
 
 
+def read_approval_excel(src: Path) -> pd.DataFrame:
+    """兼容 Lark 手工导出（第二行表头）和 fetch_lark API 导出（第一行表头）。"""
+    for skiprows in (0, 1):
+        df = pd.read_excel(src, skiprows=skiprows)
+        if "申请编号" in df.columns:
+            return df
+    raise SystemExit(f"没找到'申请编号'列，表头行不对？实际列: {list(df.columns)[:10]}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True)
@@ -31,9 +40,7 @@ def main():
     args = ap.parse_args()
     src = Path(args.file)
 
-    df = pd.read_excel(src, skiprows=1)
-    if "申请编号" not in df.columns:
-        raise SystemExit(f"没找到'申请编号'列，表头行不对？实际列: {list(df.columns)[:10]}")
+    df = read_approval_excel(src)
 
     def col(name, default=""):
         return df[name] if name in df.columns else default

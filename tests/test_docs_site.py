@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -20,6 +21,17 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "scripts" / "build_site.py"
 DOCS = ROOT / "docs"
+
+
+def _load_build_module():
+    spec = importlib.util.spec_from_file_location("build_site", BUILD)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+BUILD_SITE = _load_build_module()
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +82,21 @@ def test_page_loads_nothing_the_csp_would_block(site: Path):
     assert "eval(" not in html
 
 
+@pytest.mark.parametrize(
+    "page",
+    (
+        '<link rel="stylesheet" href="https://cdn.example/style.css">',
+        '<img src="//cdn.example/image.png">',
+        '<style>.hero { background: url(https://cdn.example/hero.png) }</style>',
+        '<script>fetch("https://api.example/data")</script>',
+        '<script type="module">import "//cdn.example/module.js"</script>',
+    ),
+)
+def test_csp_preflight_rejects_external_resource_patterns(page: str):
+    with pytest.raises(SystemExit, match="CSP"):
+        BUILD_SITE.check_page(page)
+
+
 def test_build_refuses_to_wipe_source_directories():
     """构建前会 rmtree 输出目录，所以危险参数必须在删之前就被拒。"""
     for arg in ("docs", ".", "scripts"):
@@ -81,3 +108,65 @@ def test_build_refuses_to_wipe_source_directories():
         assert proc.returncode != 0, f"传 {arg} 居然构建成功了"
         assert "拒绝" in (proc.stdout + proc.stderr)
     assert (DOCS / "multi-agent.html").exists(), "源文件被删了"
+
+
+def test_build_allows_fresh_custom_output_but_preserves_existing_one(tmp_path: Path):
+    fresh = tmp_path / "fresh-site"
+    proc = subprocess.run(
+        [sys.executable, str(BUILD), str(fresh)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT),
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    marker = fresh / "do-not-delete"
+    marker.write_text("keep", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(BUILD), str(fresh)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT),
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    assert proc.returncode != 0
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_build_rebuilds_only_its_dedicated_default_output(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    docs = repo / "docs"
+    docs.mkdir(parents=True)
+    for name, content in (
+        ("multi-agent.html", "<main>safe</main>"),
+        ("robots.txt", "User-agent: *\nAllow: /\n"),
+        ("404.html", "not found"),
+        ("_headers", "/*\n"),
+    ):
+        (docs / name).write_text(content, encoding="utf-8")
+
+    out = repo / "_site"
+    out.mkdir()
+    (out / "old-output").write_text("replace me", encoding="utf-8")
+    monkeypatch.setattr(BUILD_SITE, "ROOT", repo)
+    monkeypatch.setattr(BUILD_SITE, "DOCS", docs)
+    monkeypatch.setattr(BUILD_SITE, "DEFAULT_OUTPUT", out)
+    monkeypatch.setattr(sys, "argv", [str(BUILD), str(out)])
+
+    assert BUILD_SITE.main() == 0
+    assert not (out / "old-output").exists()
+    assert (out / "index.html").read_text(encoding="utf-8") == "<main>safe</main>"
+
+
+def test_build_refuses_fresh_repo_descendant():
+    out = ROOT / "docs" / "build-output"
+    proc = subprocess.run(
+        [sys.executable, str(BUILD), str(out)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT),
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    assert proc.returncode != 0
+    assert not out.exists()
+
+
+def test_robots_allows_crawlers_to_receive_the_noindex_header(site: Path):
+    robots = (site / "robots.txt").read_text(encoding="utf-8")
+    assert "Allow: /" in robots
+    assert "Disallow: /" not in robots
