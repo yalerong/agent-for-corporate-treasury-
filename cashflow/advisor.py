@@ -47,6 +47,19 @@ PAY_CLASS_PREFIX = ("账单出款", "税费出款", "工资薪酬", "注资款�
                     "房租物业水电出款", "利息出款", "本金出款", "基金")
 
 
+def approval_tokens(value: object) -> set[str]:
+    """流水审批号可能是 `123/456`，只能按完整 token 命中，不能 substring 命中。"""
+    text = re.sub(r"\.0\b", "", str(value or ""))
+    return set(re.findall(r"[A-Za-z0-9]+", text))
+
+
+def approval_matches(series: pd.Series, lark_no: object) -> pd.Series:
+    lark = re.sub(r"\.0$", "", str(lark_no or "").strip())
+    if not lark or lark == "nan":
+        return pd.Series(False, index=series.index)
+    return series.map(lambda v: lark in approval_tokens(v))
+
+
 def payment_flows(flows: pd.DataFrame, rules: list[dict] | None = None) -> pd.DataFrame:
     """核销候选 = 实质分类命中白名单的出账流水（liushui_whitelist 规则可覆盖默认名单）。"""
     prefixes = PAY_CLASS_PREFIX
@@ -64,6 +77,7 @@ def payment_flows(flows: pd.DataFrame, rules: list[dict] | None = None) -> pd.Da
 
 def auto_net_from_liushui(plan: pd.DataFrame, flows: pd.DataFrame,
                           week_start: pd.Timestamp | None = None,
+                          week_end: pd.Timestamp | None = None,
                           emap: dict | None = None
                           ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """对流水自动核销（v0.1 三改，2026-08-17→09-06 连错四周后定的口径）：
@@ -89,13 +103,18 @@ def auto_net_from_liushui(plan: pd.DataFrame, flows: pd.DataFrame,
             lark = str(r.get("lark_no", "")).strip()
             if not lark or lark == "nan":
                 continue
-            m = flows[appr.str.contains(re.escape(lark), na=False) & (~flows.index.isin(used))]
+            m = flows[approval_matches(appr, lark) & (~flows.index.isin(used))]
             if len(m):
                 # 同一 lark 常挂多行计划（两家各付一笔广告费）：按付款主体挑那一笔，且只消费一笔
                 if has_acct and emap and pd.notna(r["entity"]):
-                    mine = m[m["account"].map(lambda a: entity_of_account(a, emap)) == r["entity"]]
+                    payers = m["account"].map(lambda a: entity_of_account(a, emap))
+                    mine = m[payers == r["entity"]]
                     if len(mine):
                         m = mine
+                    elif r["currency"] != "USDT":
+                        ambig.append(f"{r['entity']} {r['currency']} {r['amount']:,.2f} lark {lark} 命中流水，"
+                                     "但付款账户无法映射到该主体——未核销")
+                        continue
                 f = m.iloc[0]
                 used.add(m.index[0])
                 drop.add(i)
@@ -105,7 +124,11 @@ def auto_net_from_liushui(plan: pd.DataFrame, flows: pd.DataFrame,
                              f"流水 {f['date']:%m-%d} lark {lark} 命中 {str(f['payee'])[:16]}"
                              f"{'（实付 ' + extra + '，跨币种）' if extra else ''}")
     # 2) 币种+金额（周窗口内）+ 3) 主体守门
-    win = flows if week_start is None else flows[flows["date"] >= week_start]
+    win = flows
+    if week_start is not None:
+        win = win[win["date"] >= week_start]
+    if week_end is not None:
+        win = win[win["date"] <= week_end]
     for i, r in plan.iterrows():
         if i in drop:
             continue
@@ -117,12 +140,17 @@ def auto_net_from_liushui(plan: pd.DataFrame, flows: pd.DataFrame,
         who = r["entity"] if pd.notna(r["entity"]) else None
         if has_acct and emap and r["currency"] != "USDT" and who:
             payers = m["account"].map(lambda a: entity_of_account(a, emap))
+            unknown = m[payers.isna()]
             mism = m[payers.notna() & (payers != who)]
-            m = m[~m.index.isin(mism.index)]
+            m = m[~m.index.isin(mism.index) & ~m.index.isin(unknown.index)]
             for _, f in mism.iterrows():
                 ambig.append(f"{who} {r['currency']} {r['amount']:,.2f} 同额但付款方是 "
                              f"{entity_of_account(f['account'], emap)}（{f['account']} {f['date']:%m-%d}）"
                              f"——主体不一致，未核销；若是代付请写 paid.yaml")
+            for _, f in unknown.iterrows():
+                ambig.append(f"{who} {r['currency']} {r['amount']:,.2f} 同额但付款账户 "
+                             f"{f['account']} 未映射主体（{f['date']:%m-%d}）"
+                             f"——自动金额核销不安全，请人工核后写入 paid.yaml")
         if len(m) == 1:
             f = m.iloc[0]
             used.add(m.index[0])
@@ -171,20 +199,27 @@ def mark_executed(transfers: list[dict], flows: pd.DataFrame | None) -> list[str
     if flows is None or not len(flows):
         return notes
     appr = flows["approval_no"].astype(str)
+    used = set()
     for t in transfers:
         if t.get("arrived") or t.get("executed"):
             continue
-        hit = flows[appr.str.contains(re.escape(str(t.get("lark_no", ""))), na=False)] if t.get("lark_no") else flows.iloc[0:0]
+        hit = flows[approval_matches(appr, t.get("lark_no"))] if t.get("lark_no") else flows.iloc[0:0]
         how = "lark 编号"
+        hit = hit[~hit.index.isin(used)]
         if not len(hit) and t.get("from_account"):
             hit = flows[(flows["account"].str.casefold() == str(t["from_account"]).casefold())
                         & (flows["currency"] == t.get("currency"))
                         & ((flows["amount"] - float(t["amount"])).abs() <= AMT_TOL)]
+            if t.get("date") is not None and pd.notna(t.get("date")):
+                hit = hit[hit["date"] >= pd.Timestamp(t["date"])]
+            hit = hit[~hit.index.isin(used)]
             how = "付款账户+金额"
-        if len(hit):
+        if len(hit) == 1 or (how == "lark 编号" and len(hit)):
             t["executed"] = True
             t["executed_by"] = how
-            d = hit["date"].min()
+            idx = hit.index[0]
+            used.add(idx)
+            d = hit.loc[idx, "date"]
             tag = "⚠️ 状态仍是审批中" if str(t.get("status", "")).startswith("审批中") else "状态已同意"
             notes.append(f"{t['lark_no']} {t.get('currency')} {float(t['amount']):,.0f} → {t.get('to_entity') or t.get('to_company', '')[:14]}"
                          f"：流水 {d:%m-%d} 已执行（{how}；{tag}）")
@@ -218,6 +253,7 @@ def project_self_funded(plan: pd.DataFrame, bal: pd.DataFrame, rules: list[dict]
     proj = proj[is_giro]
     pool = proj.groupby(["entity", "currency", "scope_detail"])["balance"].sum().to_dict()
     known = {k[2] for k in pool}
+    out_plan = plan.copy()
     drop, lines = [], []
     for i, r in plan.iterrows():
         if pd.isna(r["entity"]) or pd.isna(r["amount"]):
@@ -233,9 +269,11 @@ def project_self_funded(plan: pd.DataFrame, bal: pd.DataFrame, rules: list[dict]
             lines.append(f"{r['entity']} {r['currency']} {r['amount']:,.0f}｜{str(r['memo'])[:40]}"
                          f" → {tag} 项目户自付（该项目户可动用 {have:,.0f}，付后余 {pool[key]:,.0f}）")
         elif have > 0:
+            out_plan.at[i, "amount"] = float(r["amount"]) - have
+            pool[key] = 0.0
             lines.append(f"⚠️ {r['entity']} {r['currency']} {r['amount']:,.0f}｜{str(r['memo'])[:40]}"
-                         f" 属 {tag} 项目但项目户只有 {have:,.0f}，差额进集团缺口")
-    return plan.drop(index=drop).reset_index(drop=True), lines
+                         f" 属 {tag} 项目但项目户只有 {have:,.0f}，差额 {out_plan.at[i, 'amount']:,.0f} 进集团缺口")
+    return out_plan.drop(index=drop).reset_index(drop=True), lines
 
 
 def flag_stale_transfers(pending: list[dict], bal: pd.DataFrame) -> list[str]:
@@ -243,14 +281,15 @@ def flag_stale_transfers(pending: list[dict], bal: pd.DataFrame) -> list[str]:
     账上只剩 4.7 万，实际已按 7.2 万另单归集）。原地标 t['suspect']=True，compute_gaps 不再计入。"""
     if not len(bal):
         return []
-    by_acct = {str(a).casefold(): float(b) for a, b in
-               bal.groupby("account")["balance"].sum().items()}
+    by_acct = {(str(acct).casefold(), str(ccy)): float(balance)
+               for (acct, ccy), balance in bal.groupby(["account", "currency"])["balance"].sum().items()}
     out = []
     for t in pending:
         src = str(t.get("from_account") or "").casefold()
-        if not src or src not in by_acct:
+        key = (src, str(t.get("currency")))
+        if not src or key not in by_acct:
             continue
-        have = by_acct[src]
+        have = by_acct[key]
         if have < float(t["amount"]) * 0.98:
             t["suspect"] = True
             out.append(f"{t['lark_no']} {t.get('currency')} {float(t['amount']):,.0f}"
@@ -449,7 +488,7 @@ def route(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict],
             continue
         if ent in paths:
             rid, p = paths[ent]
-            way = p.get(f"fallback_{ccy.lower()}") or p.get("path")
+            way = p.get(f"fallback_{ccy.lower()}") or p.get("fallback_local_ccy") or p.get("path")
             if way:
                 status = f"；{p['localbank_status']}" if p.get("localbank_status") else ""
                 actions.append(f"[{ccy}] {ent} 缺 {gap:,.0f} → {way}（{rid}{status}）")
@@ -573,21 +612,26 @@ def main() -> None:
     emap = load_entity_map(emap_path)
     paid = load_yaml(a.paid, "paid") if a.paid else []
     transfers = load_transfers_any(a.transfers, emap) if a.transfers else []
+    carry = load_yaml(cfg_path("carryover.yaml"), "carryover")
+    plan, carry_notes = append_carryover(plan, carry)
 
-    plan, paid_notes = net_paid(plan, paid)  # 人工确认的优先核销
+    plan, paid_notes = net_paid(plan, paid)  # 人工确认的优先核销，包含滚存项
     ambig: list[str] = []
     flows = None
+    start = end = since_ts = None
     if a.liushui:
         start = pd.Timestamp(week.split("-")[0].replace(".", "-"))
+        end = pd.Timestamp(week.split("-")[-1].replace(".", "-"))
         since = (start - pd.Timedelta(days=a.liushui_days)).strftime("%Y-%m-%d")
+        since_ts = pd.Timestamp(since)
         flows = load_liushui(a.liushui, since=since)   # 全量出账：在途判定/账户质检用
         plan, auto_notes, ambig = auto_net_from_liushui(
-            plan, payment_flows(flows, rules), week_start=start, emap=emap)
-        paid_notes += auto_notes
+            plan, payment_flows(flows, rules), week_start=start, week_end=end, emap=emap)
+        paid_notes += [n + "——滚存项已付，可从 carryover.yaml 删除" if "滚存项" in n else n
+                       for n in auto_notes]
     transit_notes = mark_executed(transfers, flows)
     if flows is not None:
         # 发起时间早于流水窗口的单：执行与否无从判定（可能已在更早的流水里执行），不计在途只提示
-        since_ts = flows["date"].min() if len(flows) else None
         for t in transfers:
             d = t.get("date")
             if since_ts is not None and d is not None and pd.notna(d) and d < since_ts and not t.get("executed"):
@@ -595,12 +639,6 @@ def main() -> None:
     flag_stale_transfers([t for t in transfers if not t.get("executed") and not t.get("arrived")
                           and not t.get("unjudgeable")], bal)
     alias = load_alias(cfg_path("entity_alias.yaml"))
-    carry = load_yaml(cfg_path("carryover.yaml"), "carryover")
-    plan, carry_notes = append_carryover(plan, carry)
-    if flows is not None and carry:
-        plan, c_auto, c_amb = auto_net_from_liushui(plan, payment_flows(flows, rules), week_start=start, emap=emap)
-        paid_notes += [n + "——滚存项已付，可从 carryover.yaml 删除" for n in c_auto if "滚存" in n]
-        ambig += c_amb
     plan, project_lines = project_self_funded(plan, bal, rules, emap, alias)
     needs, blank = entity_needs(plan, emap)
     avail = entity_avail(bal, emap, rules)
@@ -621,7 +659,7 @@ def main() -> None:
                      + "；".join(suspects))
     old = [t for t in pending if t.get("unjudgeable")]
     if old:
-        transit_notes.append(f"ℹ️ {len(old)} 单发起时间早于流水窗口（{flows['date'].min():%m-%d} 前），执行与否无法判定，"
+        transit_notes.append(f"ℹ️ {len(old)} 单发起时间早于流水窗口（{since_ts:%m-%d} 前），执行与否无法判定，"
                              f"未计在途：{'、'.join(t['lark_no'] for t in old)}")
     for t in pending:
         if t.get("unjudgeable"):

@@ -484,3 +484,142 @@ def test_stale_rule_data():
              {"id": "R-001", "type": "x", "status": "approved", "params": {}}]
     out = advisor.stale_rule_data(rules, max_age_days=21, today=pd.Timestamp("2026-09-07"))
     assert len(out) == 1 and out[0].startswith("R-009") and "26 天前" in out[0]
+
+
+def test_lark_approval_matching_is_token_exact():
+    plan = plan_df([row("HK GAMMA", 1000, "USD", lark="123")])
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-08"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+        "payee": ["vendor"],
+        "memo": [""],
+        "account": ["GAMMA_BANKA_USD"],
+        "approval_no": ["91234/555"],
+        "classification": ["账单出款"],
+    })
+    out, notes, _ = advisor.auto_net_from_liushui(plan, flows, emap={
+        "entities": EMAP["entities"], "channel_overrides": {}, "account_prefixes": {"GAMMA_": "HK GAMMA"}})
+    assert len(out) == 0 and notes, "金额 fallback 可核销，但 lark substring 不能抢先命中"
+
+    transfers = [{"lark_no": "123", "amount": 1000, "currency": "USD", "from_account": "OTHER_BANKA_USD",
+                  "to_entity": "HK GAMMA", "date": pd.Timestamp("2026-09-07"), "arrived": False}]
+    advisor.mark_executed(transfers, flows)
+    assert not transfers[0].get("executed"), "91234 不能按 substring 命中 123"
+
+
+def test_auto_net_amount_window_has_end_and_blocks_unmapped_payers():
+    emap = {"entities": EMAP["entities"], "channel_overrides": {}, "account_prefixes": {"GAMMA_": "HK GAMMA"}}
+    plan = plan_df([row("HK GAMMA", 1000, "USD"), row("HK GAMMA", 2000, "USD")])
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-08", "2026-09-14"]),
+        "currency": ["USD", "USD"],
+        "amount": [1000.0, 2000.0],
+        "payee": ["vendor", "vendor"],
+        "memo": ["", ""],
+        "account": ["UNKNOWN_USD", "GAMMA_BANKA_USD"],
+        "approval_no": ["", ""],
+        "classification": ["账单出款", "账单出款"],
+    })
+    out, notes, ambig = advisor.auto_net_from_liushui(
+        plan, flows, week_start=pd.Timestamp("2026-09-07"), week_end=pd.Timestamp("2026-09-11"), emap=emap)
+    assert len(notes) == 0
+    assert sorted(out["amount"].tolist()) == [1000, 2000]
+    assert any("未映射主体" in s for s in ambig)
+
+
+def test_lark_shared_row_payer_mismatch_does_not_fallback_to_other_entity_flow():
+    emap = {"entities": EMAP["entities"], "channel_overrides": {},
+            "account_prefixes": {"ALPHA_": "HK ALPHA", "BETA_": "MX BETA"}}
+    plan = plan_df([row("HK GAMMA", 1000, "USD", lark="202609070001")])
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-08", "2026-09-08"]),
+        "currency": ["USD", "USD"],
+        "amount": [1000.0, 1000.0],
+        "payee": ["vendor", "vendor"],
+        "memo": ["", ""],
+        "account": ["ALPHA_BANKA_USD", "BETA_BANKA_USD"],
+        "approval_no": ["202609070001", "202609070001"],
+        "classification": ["账单出款", "账单出款"],
+    })
+    out, notes, ambig = advisor.auto_net_from_liushui(plan, flows, emap=emap)
+    assert len(out) == 1 and not notes
+    assert any("付款账户无法映射到该主体" in s for s in ambig)
+
+
+def test_mark_executed_amount_fallback_is_one_to_one_and_date_bounded():
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-04", "2026-09-06"]),
+        "currency": ["USD", "USD"],
+        "amount": [1000.0, 1000.0],
+        "payee": ["vendor", "vendor"],
+        "memo": ["", ""],
+        "account": ["GAMMA_BANKA_USD", "GAMMA_BANKA_USD"],
+        "approval_no": ["", ""],
+    })
+    transfers = [
+        {"lark_no": "A", "amount": 1000, "currency": "USD", "from_account": "GAMMA_BANKA_USD",
+         "to_entity": "HK GAMMA", "date": pd.Timestamp("2026-09-05"), "arrived": False},
+        {"lark_no": "B", "amount": 1000, "currency": "USD", "from_account": "GAMMA_BANKA_USD",
+         "to_entity": "HK GAMMA", "date": pd.Timestamp("2026-09-05"), "arrived": False},
+    ]
+    advisor.mark_executed(transfers, flows)
+    assert [bool(t.get("executed")) for t in transfers] == [True, False]
+    assert transfers[0]["executed_by"] == "付款账户+金额"
+
+
+def test_project_self_funded_partial_amount_consumes_project_pool():
+    ann = pd.DataFrame({
+        "company": ["GAMMA LTD"],
+        "account": ["GAMMA_BANKB_IDR_GIRO_8806_PJ1"],
+        "currency": ["IDR"],
+        "balance": [1500.0],
+        "canonical": [""],
+        "scope": ["project"],
+        "scope_detail": ["PJ1"],
+        "rule_id": [""],
+    })
+    orig = advisor.acct.annotate
+    advisor.acct.annotate = lambda bal, rules: ann
+    try:
+        plan = plan_df([row("HK GAMMA", 1000, "IDR", memo="ProjectOne fee"),
+                        row("HK GAMMA", 1000, "IDR", memo="ProjectOne fee 2")])
+        out, lines = advisor.project_self_funded(plan, bal_df([]), [], EMAP, {"PJ1": "ProjectOne"})
+    finally:
+        advisor.acct.annotate = orig
+    assert out["amount"].tolist() == [500]
+    assert any("差额 500" in ln for ln in lines)
+
+
+def test_flag_stale_transfers_keys_balance_by_account_and_currency():
+    ts = [{"lark_no": "T1", "amount": 1000.0, "currency": "USD", "from_account": "P1_Ledger",
+           "to_entity": "HK GAMMA", "status": "审批中"}]
+    bal = bal_df([("P", "P1_Ledger", "USDT", 5000.0), ("P", "P1_Ledger", "USD", 100.0)])
+    out = advisor.flag_stale_transfers(ts, bal)
+    assert out and ts[0].get("suspect")
+
+
+def test_route_payment_path_uses_fallback_local_ccy():
+    rules = [{"id": "R-020", "type": "payment_path", "status": "approved",
+              "params": {"entity": "MX BETA", "fallback_local_ccy": "控台代付"}}]
+    gaps = pd.DataFrame({"entity": ["MX BETA"], "currency": ["MXN"], "need": [100.0],
+                         "avail": [0.0], "transit": [0.0], "gap": [100.0]})
+    actions, _ = advisor.route(gaps, bal_df([]), rules, 17.0)
+    assert actions == ["[MXN] MX BETA 缺 100 → 控台代付（R-020）"]
+
+
+def test_load_transfers_seen_after_valid_amount(tmp_dir):
+    xlsx = tmp_dir / "transfers.xlsx"
+    df = pd.DataFrame({
+        "申请编号": ["202609070001", "202609070001"],
+        "申请状态": ["审批中", "审批中"],
+        "发起时间": ["2026-09-07", "2026-09-07"],
+        "调拨明细-调拨原因": ["bad", "GAMMA_BANKA_USD to GAMMA_BANKB_USD"],
+        "调拨明细-金额": ["", 1000],
+        "收款方信息-主体": ["GAMMA LTD", "GAMMA LTD"],
+        "收款方信息-账号": ["GAMMA_BANKB_USD", "GAMMA_BANKB_USD"],
+        "调拨明细-调拨性质": ["调拨", "调拨"],
+    })
+    df.to_excel(xlsx, index=False)
+    transfers = ai.load_transfers_any(xlsx, EMAP)
+    assert len(transfers) == 1 and transfers[0]["amount"] == 1000

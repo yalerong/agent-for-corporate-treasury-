@@ -223,10 +223,10 @@ def load_transfers_any(path: str | Path, emap: dict | None = None) -> list[dict]
         lark = re.sub(r"\.0$", "", str(r["申请编号"]).strip())
         if not lark or lark == "nan" or lark in seen:
             continue
-        seen.add(lark)
         amt = pd.to_numeric(r[c_amt], errors="coerce")
         if pd.isna(amt):
             continue
+        seen.add(lark)
         acct = str(r[c_acct]).strip() if pd.notna(r[c_acct]) else ""
         reason = str(r[c_reason]) if pd.notna(r[c_reason]) else ""
         ccy = CCY_WORDS.get(str(r[c_ccy]).strip()) if c_ccy and pd.notna(r.get(c_ccy)) else None
