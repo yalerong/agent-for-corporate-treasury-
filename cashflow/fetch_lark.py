@@ -251,9 +251,15 @@ def fetch_approvals(out_dir: Path, days: int) -> None:
             # shape compatible with Lark's timezone-naive manual export.
             return datetime.fromtimestamp(int(v) / 1000, tz).strftime("%Y-%m-%d %H:%M:%S") if v and str(v) != "0" else ""
 
+        def elapsed(start_value, end_value) -> str:
+            if not start_value or not end_value or str(end_value) == "0":
+                return ""
+            return f"{max(0, int(end_value) - int(start_value)) / 1000:g}s"
+
         rows.append({"申请编号": inst.get("serial_number"), "标题": inst.get("approval_name"),
                      "申请状态": st_map.get(inst.get("status"), inst.get("status")),
                      "发起时间": ts(inst.get("start_time")), "完成时间": ts(inst.get("end_time")),
+                     "审批耗时": elapsed(inst.get("start_time"), inst.get("end_time")),
                      "实例code": ic, **_flatten_form(inst.get("form"))})
         if i % 25 == 0:
             print(f"  …{i}/{len(items)}")

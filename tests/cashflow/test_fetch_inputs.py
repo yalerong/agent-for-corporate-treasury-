@@ -105,6 +105,7 @@ def test_approval_query_splits_windows_paginates_and_dedupes(monkeypatch, tmp_pa
     assert detail_codes == ["A", "B", "C"]
     exported = pd.read_excel(next(tmp_path.glob("调拨申请_api_*.xlsx")))
     assert exported["发起时间"].tolist() == ["2026-01-01 08:00:00"] * 3
+    assert [ingest_approvals.parse_hours(value) for value in exported["审批耗时"]] == [1.0] * 3
 
 
 def test_approval_windows_never_exceed_api_limit():

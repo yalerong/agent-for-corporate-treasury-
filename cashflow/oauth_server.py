@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import suppress
@@ -49,7 +50,11 @@ class Handler(BaseHTTPRequestHandler):
                            "redirect_uri": REDIRECT}).encode()
         req = urllib.request.Request(f"{BASE}/authen/v2/oauth/token", body,
                                      {"Content-Type": "application/json"})
-        resp = json.load(urllib.request.urlopen(req))
+        try:
+            resp = json.load(urllib.request.urlopen(req))
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            self._finish(False, f"换取 token 失败: {exc}")
+            return
         ok = "access_token" in resp
         if ok:
             OUT.write_text(json.dumps(resp, ensure_ascii=False, indent=1), encoding="utf-8")
