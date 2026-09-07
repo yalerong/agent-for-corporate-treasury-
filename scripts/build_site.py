@@ -62,8 +62,13 @@ def check_page(html: str) -> None:
     def find_urls(pattern: str) -> None:
         external.update(match.group("url") for match in re.finditer(pattern, html, re.IGNORECASE))
 
-    # src and srcset load resources from every element that supports them.
-    find_urls(rf"\bsrc(?:set)?\s*=\s*[\"']?(?P<url>{external_url})")
+    # src loads one URL; srcset may put an external URL after local candidates.
+    find_urls(rf"\bsrc\s*=\s*[\"']?(?P<url>{external_url})")
+    for match in re.finditer(r"\bsrcset\s*=\s*([\"'])(?P<value>.*?)\1", html, re.IGNORECASE):
+        for candidate in match.group("value").split(","):
+            url = candidate.strip().split(maxsplit=1)[0]
+            if re.fullmatch(external_url, url):
+                external.add(url)
     # href is only resource-bearing on these elements; normal links may navigate away
     # without violating this site's resource CSP.
     find_urls(

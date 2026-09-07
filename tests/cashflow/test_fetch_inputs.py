@@ -39,6 +39,26 @@ def test_tenant_token_requires_env_secret(monkeypatch):
         fetch_lark.tenant_token()
 
 
+def test_do_auth_reports_callback_failure_without_traceback(monkeypatch, tmp_path):
+    server = tmp_path / "oauth_server.py"
+    server.write_text("# test callback", encoding="utf-8")
+    seen = {}
+
+    def fake_run(command, *, check, env):
+        seen.update(command=command, check=check, state=env.get("LARK_OAUTH_STATE"))
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(fetch_lark, "OAUTH_SERVER", server)
+    monkeypatch.setattr(fetch_lark.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="OAuth 授权失败"):
+        fetch_lark.do_auth()
+
+    assert seen["command"] == [sys.executable, str(server)]
+    assert seen["check"] is False
+    assert seen["state"]
+
+
 def test_default_approvals_only_flow_does_not_require_user_token(monkeypatch, tmp_path):
     called = []
     monkeypatch.setattr(sys, "argv", ["fetch_lark.py", "--out", str(tmp_path)])

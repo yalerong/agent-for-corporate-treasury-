@@ -87,6 +87,7 @@ def test_page_loads_nothing_the_csp_would_block(site: Path):
     (
         '<link rel="stylesheet" href="https://cdn.example/style.css">',
         '<img src="//cdn.example/image.png">',
+        '<img srcset="/local.png 1x, https://cdn.example/remote.png 2x">',
         '<style>.hero { background: url(https://cdn.example/hero.png) }</style>',
         '<script>fetch("https://api.example/data")</script>',
         '<script type="module">import "//cdn.example/module.js"</script>',

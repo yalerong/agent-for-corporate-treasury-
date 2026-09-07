@@ -108,7 +108,9 @@ def do_auth() -> None:
            f"&redirect_uri={requests.utils.quote(REDIRECT, safe='')}&state={state}")
     print("1) 回调服务已在 :3000 等待\n2) 浏览器打开下面链接并点同意：\n\n   " + url + "\n", flush=True)
     env = {**os.environ, "LARK_OAUTH_STATE": state}
-    subprocess.run([sys.executable, str(OAUTH_SERVER)], check=True, env=env)
+    proc = subprocess.run([sys.executable, str(OAUTH_SERVER)], check=False, env=env)
+    if proc.returncode:
+        raise SystemExit("OAuth 授权失败，详见上面的 TOKEN_RESULT")
     print("token 写入", TOKEN_FILE)
 
 
