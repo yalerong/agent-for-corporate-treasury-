@@ -42,7 +42,7 @@ python ui.py                # 本地审批台：报告/规律审批/预测明细
 
 接入真实数据只需两步：复制 `column_map.example.yaml` 为 `column_map.yaml` 改成你的导出列名；把 xlsx/csv 丢进 `data/raw/`。
 
-针对具体系统导出另有专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）；余额双路径——`ingest_balances.py`（finweb 余额总览 Excel 导出）与 `ingest_balances_api.py`（finweb 接口直取，`FINWEB_BASE_URL`/`FINWEB_TOKEN`）。
+针对具体系统导出另有专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）；余额双路径——`ingest_balances.py`（finweb 余额总览 Excel 导出；`fetch_finweb.py` 默认落到 `data/raw/balances/`）与 `ingest_balances_api.py`（finweb 接口直取，`FINWEB_BASE_URL`/`FINWEB_TOKEN`）。
 
 ---
 

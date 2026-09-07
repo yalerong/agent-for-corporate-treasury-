@@ -10,11 +10,12 @@
 user_access_token 2 小时过期：过期时本脚本会提示重跑授权（--auth 会替你起回调服务并打印授权链接）。
 
 环境变量（.env）：
-    LARK_APP_ID / LARK_APP_SECRET   应用凭据（SECRET 不填则从 LARK_OAUTH_SERVER 脚本里读）
+    LARK_APP_ID / LARK_APP_SECRET   应用凭据（只从环境变量/.env 读取）
     LARK_OAUTH_SERVER       一次性 OAuth 回调脚本路径（默认与本文件同目录 oauth_server.py）
     LARK_USER_TOKEN_FILE    user token 缓存（默认与回调脚本同目录 user_token.json）
     LARK_SHEET_BANK / LARK_SHEET_PAY / LARK_SHEET_BUDGET   三张表的 spreadsheet token（URL 里 /sheets/<token>）
     LARK_APPROVAL_CODE_DIAOBO   调拨申请审批定义 code（instances/query 返回的 approval.code）
+    LARK_APPROVAL_TIMEZONE      审批时间输出时区（默认 Asia/Shanghai）
 
 用法：
     python cashflow/fetch_lark.py            # 三表 + 最近 30 天调拨审批
@@ -27,11 +28,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 from dotenv import load_dotenv
@@ -44,12 +47,41 @@ APP_ID = os.environ.get("LARK_APP_ID", "")
 REDIRECT = os.environ.get("LARK_OAUTH_REDIRECT", "http://localhost:3000/callback")
 OAUTH_SERVER = Path(os.environ.get("LARK_OAUTH_SERVER") or HERE / "oauth_server.py")
 TOKEN_FILE = Path(os.environ.get("LARK_USER_TOKEN_FILE") or OAUTH_SERVER.with_name("user_token.json"))
+BUSINESS_TZ = os.environ.get("LARK_APPROVAL_TIMEZONE", "Asia/Shanghai")
 
 SHEETS = {  # 文件名前缀 → env 键
     "银行账户余额表 2026": "LARK_SHEET_BANK",
     "支付账户余额表 2026": "LARK_SHEET_PAY",
     "资金计划表": "LARK_SHEET_BUDGET",
 }
+
+
+def auth_host_for_api_base(api_base: str = BASE) -> str:
+    if "open.feishu.cn" in api_base:
+        return "https://accounts.feishu.cn"
+    return "https://accounts.larksuite.com"
+
+
+def sheet_envs_configured() -> bool:
+    return any(os.environ.get(env) for env in SHEETS.values())
+
+
+def business_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(BUSINESS_TZ)
+    except ZoneInfoNotFoundError:
+        raise SystemExit(f"未知 LARK_APPROVAL_TIMEZONE={BUSINESS_TZ!r}，请使用 IANA 时区名，例如 Asia/Shanghai") from None
+
+
+def approval_windows(end: datetime, days: int) -> list[tuple[datetime, datetime]]:
+    start = end - timedelta(days=days)
+    windows = []
+    cursor = start
+    while cursor < end:
+        nxt = min(cursor + timedelta(days=30), end)
+        windows.append((cursor, nxt))
+        cursor = nxt
+    return windows or [(start, end)]
 
 
 # ---------- token ----------
@@ -71,10 +103,14 @@ def load_token() -> str:
 def do_auth() -> None:
     if not OAUTH_SERVER.exists():
         raise SystemExit(f"找不到 {OAUTH_SERVER}")
-    url = (f"https://accounts.larksuite.com/open-apis/authen/v1/authorize?app_id={APP_ID}"
-           f"&redirect_uri={requests.utils.quote(REDIRECT, safe='')}&state=treasury")
+    state = secrets.token_urlsafe(24)
+    url = (f"{auth_host_for_api_base()}/open-apis/authen/v1/authorize?app_id={APP_ID}"
+           f"&redirect_uri={requests.utils.quote(REDIRECT, safe='')}&state={state}")
     print("1) 回调服务已在 :3000 等待\n2) 浏览器打开下面链接并点同意：\n\n   " + url + "\n", flush=True)
-    subprocess.run([sys.executable, str(OAUTH_SERVER)], check=False)
+    env = {**os.environ, "LARK_OAUTH_STATE": state}
+    proc = subprocess.run([sys.executable, str(OAUTH_SERVER)], check=False, env=env)
+    if proc.returncode:
+        raise SystemExit("OAuth 授权失败，详见上面的 TOKEN_RESULT")
     print("token 写入", TOKEN_FILE)
 
 
@@ -140,13 +176,8 @@ def fetch_sheets(token: str, out_dir: Path) -> None:
 # ---------- 审批实例（应用身份 tenant_access_token；用户身份 token 不支持 instances/query） ----------
 def tenant_token() -> str:
     sec = os.environ.get("LARK_APP_SECRET")
-    if not sec:  # 复用 oauth_server.py 里的密钥，不在本仓库落真值
-        import re
-        src = OAUTH_SERVER.read_text(encoding="utf-8")
-        m = re.search(r'client_secret"?\s*[:=]\s*"([^"]+)"', src) or re.search(r'APP_SECRET\s*=\s*"([^"]+)"', src)
-        if not m:
-            raise SystemExit("拿不到应用密钥：.env 填 LARK_APP_SECRET，或保证 oauth_server.py 里有")
-        sec = m.group(1)
+    if not sec:
+        raise SystemExit("拿不到应用密钥：请在 .env 填 LARK_APP_SECRET")
     d = requests.post(f"{BASE}/auth/v3/tenant_access_token/internal",
                       json={"app_id": APP_ID, "app_secret": sec}, timeout=30).json()
     if d.get("code") != 0:
@@ -184,23 +215,30 @@ def fetch_approvals(out_dir: Path, days: int) -> None:
         print("跳过审批：.env 没填 LARK_APPROVAL_CODE_DIAOBO")
         return
     tok = tenant_token()
-    end = datetime.now()
+    tz = business_timezone()
+    end = datetime.now(tz)
     start = end - timedelta(days=days)
     items: list[dict] = []
-    page_token = None
-    while True:
-        params = {"page_size": 100, "user_id_type": "open_id"}
-        if page_token:
-            params["page_token"] = page_token
-        d = api("POST", "/approval/v4/instances/query", tok, params=params,
-                json={"approval_code": code,
-                      "instance_start_time_from": str(int(start.timestamp() * 1000)),
-                      "instance_start_time_to": str(int(end.timestamp() * 1000))})
-        data = d.get("data", {})
-        items += data.get("instance_list", [])
-        if not data.get("has_more"):
-            break
-        page_token = data.get("page_token")
+    seen_codes: set[str] = set()
+    for win_start, win_end in approval_windows(end, days):
+        page_token = None
+        while True:
+            params = {"page_size": 100, "user_id_type": "open_id"}
+            if page_token:
+                params["page_token"] = page_token
+            d = api("POST", "/approval/v4/instances/query", tok, params=params,
+                    json={"approval_code": code,
+                          "instance_start_time_from": str(int(win_start.timestamp() * 1000)),
+                          "instance_start_time_to": str(int(win_end.timestamp() * 1000))})
+            data = d.get("data", {})
+            for item in data.get("instance_list", []):
+                instance_code = item.get("instance", {}).get("code")
+                if instance_code and instance_code not in seen_codes:
+                    seen_codes.add(instance_code)
+                    items.append(item)
+            if not data.get("has_more"):
+                break
+            page_token = data.get("page_token")
     print(f"调拨审批实例 {len(items)} 单（{start:%m-%d} → {end:%m-%d}）")
 
     st_map = {"PENDING": "审批中", "APPROVED": "已同意", "REJECTED": "已拒绝", "CANCELED": "已撤回", "DELETED": "已删除"}
@@ -210,10 +248,20 @@ def fetch_approvals(out_dir: Path, days: int) -> None:
         d = api("GET", f"/approval/v4/instances/{ic}", tok, params={"user_id_type": "open_id"})
         inst = d["data"]
         raw.append(inst)
-        ts = lambda v: datetime.fromtimestamp(int(v) / 1000).strftime("%Y-%m-%d %H:%M:%S") if v and str(v) != "0" else ""  # noqa: E731
+        def ts(v) -> str:
+            # Convert with an explicit business timezone, but keep the workbook
+            # shape compatible with Lark's timezone-naive manual export.
+            return datetime.fromtimestamp(int(v) / 1000, tz).strftime("%Y-%m-%d %H:%M:%S") if v and str(v) != "0" else ""
+
+        def elapsed(start_value, end_value) -> str:
+            if not start_value or not end_value or str(end_value) == "0":
+                return ""
+            return f"{max(0, int(end_value) - int(start_value)) / 1000:g}s"
+
         rows.append({"申请编号": inst.get("serial_number"), "标题": inst.get("approval_name"),
                      "申请状态": st_map.get(inst.get("status"), inst.get("status")),
                      "发起时间": ts(inst.get("start_time")), "完成时间": ts(inst.get("end_time")),
+                     "审批耗时": elapsed(inst.get("start_time"), inst.get("end_time")),
                      "实例code": ic, **_flatten_form(inst.get("form"))})
         if i % 25 == 0:
             print(f"  …{i}/{len(items)}")
@@ -238,7 +286,7 @@ def main() -> None:
         return
     out_dir = Path(a.out) if a.out else DATA_ROOT / "raw" / date.today().isoformat()
     both = not (a.sheets or a.approvals)
-    if a.sheets or both:
+    if (a.sheets or both) and (a.sheets or sheet_envs_configured()):
         fetch_sheets(load_token(), out_dir)
     if a.approvals or both:
         fetch_approvals(out_dir, a.days)

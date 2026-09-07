@@ -15,12 +15,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pandas numpy pyyaml tabulate openpyxl pytest ruff fastapi httpx uvicorn python-multipart "mcp>=1.2,<2"
+        run: pip install pandas numpy pyyaml tabulate openpyxl pytest ruff requests python-dotenv fastapi httpx uvicorn python-multipart "mcp>=1.2,<2"
       - name: Ruff
         run: ruff check cashflow tests/cashflow
       - name: Tests
         # confcutdir 隔断 tests/conftest.py（它 import app 依赖，本作业不安装）
         run: pytest tests/cashflow -q --confcutdir=tests/cashflow
+      - name: Docs-site deployment checks
+        run: pytest tests/test_docs_site.py -q --noconftest
 
   app:
     name: app full tests (observing)

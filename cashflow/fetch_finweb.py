@@ -42,9 +42,14 @@ DATA_ROOT = Path(os.environ.get("CASHFLOW_ROOT") or HERE) / "data"
 TOKEN_CACHE = DATA_ROOT / ".finweb_token.json"
 
 
+def normalize_totp_secret(secret_b32: str) -> str:
+    return "".join(secret_b32.split()).upper()
+
+
 def totp_now(secret_b32: str, step: int = 30, digits: int = 6) -> str:
     """RFC 6238，与 pyotp / Google Authenticator 一致；不引第三方包。"""
-    key = base64.b32decode(secret_b32.strip().replace(" ", "").upper() + "=" * (-len(secret_b32.strip()) % 8))
+    normalized = normalize_totp_secret(secret_b32)
+    key = base64.b32decode(normalized + "=" * (-len(normalized) % 8))
     counter = struct.pack(">Q", int(time.time()) // step)
     mac = hmac.new(key, counter, hashlib.sha1).digest()
     offset = mac[-1] & 0x0F
@@ -142,6 +147,7 @@ def main() -> None:
     ap.add_argument("--to", dest="d_to", help="流水截止日 YYYY-MM-DD（默认今天）")
     ap.add_argument("--totp-code", help="手输 6 位动态码")
     ap.add_argument("--out", help="落地目录（默认 cashflow/data/raw/<今天>）")
+    ap.add_argument("--balances-out", help="余额导出目录（默认 cashflow/data/raw/balances，供 ingest_balances.py 直接读取）")
     a = ap.parse_args()
 
     today = date.today()
@@ -155,7 +161,8 @@ def main() -> None:
 
     p1 = fw.export_transactions(d_from, d_to, out_dir / f"流水查询_原始流水_{d_to.isoformat()}.xlsx")
     print(f"流水 {d_from} → {d_to}：{p1}  ({p1.stat().st_size:,} B)")
-    p2 = fw.export_balances(out_dir / f"finweb余额总览_{today.isoformat()}.xlsx")
+    balances_dir = Path(a.balances_out) if a.balances_out else DATA_ROOT / "raw" / "balances"
+    p2 = fw.export_balances(balances_dir / f"finweb余额总览_{today.isoformat()}.xlsx")
     print(f"余额总览：{p2}  ({p2.stat().st_size:,} B)")
 
     # 落地即做一次结构自检，早发现导出格式变化
