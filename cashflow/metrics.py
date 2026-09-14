@@ -5,8 +5,8 @@ lineage = {pattern_ids, data_range, db_row_count, patterns_generated_at, compute
 整 run 由 engine 落 runs/<date>/lineage.json，report.md 各节标注 metric_id。
 value 是结构化数据（DataFrame/dict/list），排版一律在 engine.build_report。
 
-审批门控在 build_context 定：strict 下计算口径=status==approved 的预测行，
-否则=confidence==high；refuted 任何模式不进预测。
+审批门控在 build_context 定：strict 下计算口径=status==approved 的预测行；
+--no-strict-approval 才显式退到 confidence==high；refuted 任何模式不进预测。
 """
 import sqlite3
 from datetime import timedelta
@@ -24,6 +24,11 @@ PAT = ROOT / "patterns" / "patterns.yaml"
 
 REGISTRY = {}
 
+FORECAST_COLUMNS = [
+    "entity", "project", "currency", "payee", "week", "start", "forecast",
+    "source", "confidence", "status", "pattern_id", "note",
+]
+
 
 def metric(mid: str):
     def deco(fn):
@@ -37,10 +42,94 @@ def load_registry() -> list[dict]:
     return doc["metrics"]
 
 
-def build_context(asof_arg: str | None, strict_flag: bool) -> dict:
-    """加载全部输入并定门控。asof 缺省=规律库数据末日；strict 在 approved=0 时回退过渡模式。"""
+def require_payment_fresh(pay: pd.DataFrame, asof: pd.Timestamp, max_age_days: int) -> None:
+    latest = pay["date"].max()
+    if pd.isna(latest):
+        raise SystemExit("付款数据为空，无法生成报告")
+    lag = (asof.normalize() - latest.normalize()).days
+    if lag > max_age_days:
+        raise SystemExit(f"付款数据截止 {latest.date()}，距 asof {asof.date()} 已 {lag} 天，"
+                         f"超过 {max_age_days} 天")
+
+
+def require_patterns_fresh(pats: dict, pay: pd.DataFrame, asof: pd.Timestamp,
+                           max_age_days: int) -> None:
+    meta = pats.get("meta") or {}
+    try:
+        pattern_end = pd.Timestamp(str((meta.get("data_range") or [None, None])[1]))
+    except (ValueError, TypeError):
+        raise SystemExit("patterns.yaml data_range 无法解析，先重跑 patterns.py") from None
+    if pd.isna(pattern_end):
+        raise SystemExit("patterns.yaml data_range 无法解析，先重跑 patterns.py")
+    pattern_end = pattern_end.normalize()
+    lag = (asof.normalize() - pattern_end).days
+    if lag < 0:
+        raise SystemExit(f"patterns.yaml data_range 截止 {pattern_end.date()} 晚于 asof {asof.date()}")
+    if lag > max_age_days:
+        raise SystemExit(f"patterns.yaml data_range 截止 {pattern_end.date()}，距 asof {asof.date()} 已 {lag} 天，"
+                         f"超过 {max_age_days} 天，先重跑 patterns.py")
+    rows = meta.get("rows")
+    if rows != len(pay):
+        raise SystemExit(f"patterns.yaml rows={rows} 与 asof 内 payments={len(pay)} 不一致，先重跑 patterns.py")
+    expected_fp = meta.get("payments_fingerprint")
+    if not expected_fp:
+        raise SystemExit("patterns.yaml payments_fingerprint 缺失，先重跑 patterns.py")
+    try:
+        actual_fp = ps.payments_fingerprint(pay)
+    except ValueError as exc:
+        raise SystemExit(f"{exc}，先重跑 ingest.py 和 patterns.py") from None
+    if expected_fp != actual_fp:
+        raise SystemExit("patterns.yaml payments_fingerprint 与 payments 内容不一致，先重跑 patterns.py")
+
+
+def require_selected_balance_fresh(selection_asof: pd.Timestamp, freshness_asof: pd.Timestamp,
+                                   max_age_days: int) -> None:
+    con = sqlite3.connect(DB)
+    try:
+        bal = pd.read_sql("SELECT * FROM balances WHERE as_of<=?", con,
+                          params=(selection_asof.strftime("%Y-%m-%d"),))
+    except Exception:
+        raise SystemExit("balance snapshot 不存在，先跑 ingest_balances.py") from None
+    finally:
+        con.close()
+    if bal.empty:
+        raise SystemExit(
+            f"balance snapshot 在报告截止 {selection_asof.date()} 前为空，先跑 ingest_balances.py"
+        )
+    balance_dates = pd.to_datetime(bal["as_of"], errors="coerce")
+    if balance_dates.isna().any():
+        raise SystemExit("balance snapshot 含非法 as_of，先重新入库")
+    bal = bal.assign(_as_of=balance_dates)
+    key = ["entity", "bank", "account", "currency"]
+    bal[["bank", "account"]] = bal[["bank", "account"]].fillna("")
+    selected_dates = bal.groupby(key)["_as_of"].max()
+    lags = (freshness_asof.normalize() - selected_dates.dt.normalize()).dt.days
+    future = selected_dates[lags < 0]
+    if not future.empty:
+        raise SystemExit(
+            f"balance snapshot {future.max().date()} 晚于 asof {freshness_asof.date()}"
+        )
+    stale = selected_dates[lags > max_age_days]
+    if not stale.empty:
+        oldest = stale.min()
+        max_lag = int(lags.loc[stale.index].max())
+        raise SystemExit(
+            f"balance snapshot 有 {len(stale)} 个账户截止最早为 {oldest.date()}，"
+            f"距 asof {freshness_asof.date()} 最长 {max_lag} 天，超过 {max_age_days} 天，"
+            "先跑 ingest_balances.py"
+        )
+
+
+def build_context(asof_arg: str | None, strict_flag: bool,
+                  require_fresh: bool = False, max_payment_age_days: int = 1) -> dict:
+    """加载全部输入并定门控。asof 缺省=规律库数据末日；strict 不自动回退。"""
     pats = ps.load(PAT)
-    seed = pd.Timestamp(asof_arg) if asof_arg else pd.Timestamp(pats["meta"]["data_range"][1])
+    if asof_arg:
+        seed = pd.Timestamp(asof_arg)
+    elif require_fresh:
+        seed = pd.Timestamp.today().normalize()
+    else:
+        seed = pd.Timestamp(pats["meta"]["data_range"][1])
     con = sqlite3.connect(DB)
     pay = pd.read_sql("SELECT * FROM payments WHERE date<=?", con,
                       params=(seed.strftime("%Y-%m-%d"),), parse_dates=["date"])
@@ -60,11 +149,15 @@ def build_context(asof_arg: str | None, strict_flag: bool) -> dict:
         else:
             rp.update(raw)
     asof = pay["date"].max()
-    strict, transition = strict_flag, False
-    if strict and not any(ps.status_of(p) == "approved" for p in pats["patterns"]):
-        strict, transition = False, True
+    if require_fresh:
+        require_payment_fresh(pay, seed, max_payment_age_days)
+        require_patterns_fresh(pats, pay, seed, max_payment_age_days)
+        require_selected_balance_fresh(asof, seed, max_payment_age_days)
+    strict = strict_flag
+    approved_count = sum(1 for p in pats["patterns"] if ps.status_of(p) == "approved")
     return {"pay": pay, "pats": pats, "bud": bud, "rp": rp, "asof": asof,
-            "month": asof.strftime("%Y-%m"), "strict": strict, "transition": transition}
+            "month": asof.strftime("%Y-%m"), "strict": strict, "transition": False,
+            "approved_count": approved_count}
 
 
 def compute_all(ctx: dict) -> dict:
@@ -87,6 +180,14 @@ def compute_all(ctx: dict) -> dict:
 def calc_rows(fc: pd.DataFrame, strict: bool) -> pd.DataFrame:
     """进计算的预测行：strict=仅人工批准，否则按置信度。"""
     return fc[fc["status"] == "approved"] if strict else fc[fc["confidence"] == "high"]
+
+
+def unknown_forecast_currencies(fc: pd.DataFrame) -> set[str]:
+    candidates = fc.attrs.get("candidates")
+    if (not isinstance(candidates, pd.DataFrame) or candidates.empty
+            or "currency" not in candidates.columns):
+        return set()
+    return set(candidates["currency"].dropna().astype(str))
 
 
 # ---------- 预算 ----------
@@ -188,13 +289,13 @@ def mom_attribution_metric(ctx, _out):
 @metric("forecast_4w")
 def forecast_4w_metric(ctx, _out):
     pats, asof = ctx["pats"], ctx["asof"]
-    # refuted（人工否决）的规律不进任何预测行
-    usable = [p for p in pats["patterns"] if ps.status_of(p) != "refuted"]
+    # refuted never appears; candidate/provisional rows stay separate from official forecast.
+    all_usable = [p for p in pats["patterns"] if ps.status_of(p) != "refuted"]
     rows = []
     horizon = [(asof + timedelta(days=1 + 7 * i),
                 asof + timedelta(days=7 * (i + 1))) for i in range(4)]
-    levels = [p for p in usable if p["type"] == "weekly_level"]
-    recs = [p for p in usable if p["type"] == "recurring"]
+    levels = [p for p in all_usable if p["type"] == "weekly_level"]
+    recs = [p for p in all_usable if p["type"] == "recurring"]
     for i, (w0, w1) in enumerate(horizon, 1):
         for p in levels:
             amt = p["base_weekly"]
@@ -213,9 +314,8 @@ def forecast_4w_metric(ctx, _out):
                              "confidence": p["confidence"], "status": ps.status_of(p),
                              "pattern_id": p.get("id") or ps.pattern_id(p["type"], p["key"]),
                              "note": ""})
-    fc = pd.DataFrame(rows)
-    if "payee" not in fc.columns:
-        fc["payee"] = ""
+    fc = pd.DataFrame(rows, columns=FORECAST_COLUMNS)
+    fc["payee"] = fc["payee"].fillna("")
     # 自主权滑块：按金额/关键词分档标注 review 列，只标注不拦截
     pol = policy_mod.load_policy()
     if pol is not None and not fc.empty:
@@ -223,7 +323,13 @@ def forecast_4w_metric(ctx, _out):
             policy_mod.review_tier(r["forecast"], r["currency"],
                                    f"{r['entity']}{r['project']}{r['payee']}", pol)
             for _, r in fc.iterrows()]
-    return fc, ([] if fc.empty else list(fc["pattern_id"]))
+    if fc.empty:
+        fc.attrs["candidates"] = fc.copy()
+        return fc, []
+    eligible = fc["status"].eq("approved") if ctx["strict"] else fc["confidence"].eq("high")
+    official = fc[eligible].reset_index(drop=True)
+    official.attrs["candidates"] = fc[~eligible].reset_index(drop=True)
+    return official, ([] if official.empty else list(official["pattern_id"]))
 
 
 # ---------- 头寸与调拨 ----------
@@ -279,16 +385,30 @@ def position_metric(ctx, out):
         return None, []
     fc = out["forecast_4w"]["value"]
     calc = calc_rows(fc, ctx["strict"])
-    out_cur = calc.groupby("currency")["forecast"].sum()
+    if calc.empty:
+        value = {"unknown": True, "reason": "no_official_forecast",
+                 "snapshot_date": bal["as_of"].max(), "currency_rows": [],
+                 "events": [], "fx_gap": None,
+                 "unknown_currencies": sorted(unknown_forecast_currencies(fc))}
+        return value, []
+    unknown_currencies = unknown_forecast_currencies(fc)
+    known_calc = calc[~calc["currency"].isin(unknown_currencies)]
+    out_cur = known_calc.groupby("currency")["forecast"].sum()
     bal_cur = bal.groupby("currency")["balance"].sum()
     currency_rows, fx_gap = [], {}
-    for cur in sorted(set(bal_cur.index) | set(out_cur.index)):
-        b, o = float(bal_cur.get(cur, 0.0)), float(out_cur.get(cur, 0.0))
+    for cur in sorted(set(bal_cur.index) | set(out_cur.index) | unknown_currencies):
+        b = float(bal_cur.get(cur, 0.0))
+        if cur in unknown_currencies:
+            currency_rows.append({"currency": cur, "balance": b, "outflow": None,
+                                  "position": None, "unknown": True})
+            continue
+        o = float(out_cur.get(cur, 0.0))
         fx_gap[cur] = max(0.0, o - b)
         currency_rows.append({"currency": cur, "balance": b, "outflow": o, "position": b - o})
 
-    out_ent = split_outflow_by_entity(calc, pay=ctx["pay"])
-    bal_ent = bal.groupby(["entity", "currency"])["balance"].sum()
+    out_ent = split_outflow_by_entity(known_calc, pay=ctx["pay"])
+    known_bal = bal[~bal["currency"].isin(unknown_currencies)]
+    bal_ent = known_bal.groupby(["entity", "currency"])["balance"].sum()
     ent_pos = bal_ent.sub(out_ent, fill_value=0.0)
     avail = {k: float(v) for k, v in ent_pos[ent_pos > 0].items()}
     events = []
@@ -308,8 +428,9 @@ def position_metric(ctx, out):
         if need > 0:
             events.append({"kind": "residual", "entity": ent, "currency": cur, "amount": need})
     value = {"snapshot_date": bal["as_of"].max(), "currency_rows": currency_rows,
-             "events": events, "fx_gap": fx_gap}
-    return value, ([] if calc.empty else list(calc["pattern_id"]))
+             "events": events, "fx_gap": fx_gap,
+             "unknown_currencies": sorted(unknown_currencies)}
+    return value, ([] if known_calc.empty else list(known_calc["pattern_id"]))
 
 
 # ---------- 外汇 ----------
@@ -320,10 +441,18 @@ def fx_advice_metric(ctx, out):
     fc = out["forecast_4w"]["value"]
     calc = calc_rows(fc, ctx["strict"])
     pos = out["position"]["value"]
+    unknown_currencies = unknown_forecast_currencies(fc)
+    if pos is not None:
+        unknown_currencies |= set(pos.get("unknown_currencies", []))
+    known_calc = calc[~calc["currency"].isin(unknown_currencies)]
+    if calc.empty:
+        return {"items": [], "has_balance": pos is not None, "unknown": True,
+                "reason": "no_official_forecast",
+                "unknown_currencies": sorted(unknown_forecast_currencies(fc))}, []
     fx_gap = None if pos is None else pos["fx_gap"]
     bud, month = ctx["bud"], ctx["month"]
     items = []
-    for cur, outflow in calc.groupby("currency")["forecast"].sum().items():
+    for cur, outflow in known_calc.groupby("currency")["forecast"].sum().items():
         need = float(outflow) if fx_gap is None else fx_gap.get(cur, 0.0)
         if fx_gap is not None and need <= 0:
             items.append({"currency": cur, "outflow": float(outflow), "covered": True,
@@ -334,8 +463,9 @@ def fx_advice_metric(ctx, out):
             cap = bud[(bud["month"] == month) & (bud["currency"] == cur)]["budget"].sum()
         items.append({"currency": cur, "outflow": float(outflow), "covered": False,
                       "need": float(need), "cap": float(cap) if cap else None})
-    return {"items": items, "has_balance": fx_gap is not None}, \
-        ([] if calc.empty else list(calc["pattern_id"]))
+    return {"items": items, "has_balance": fx_gap is not None,
+            "unknown_currencies": sorted(unknown_currencies)}, \
+        ([] if known_calc.empty else list(known_calc["pattern_id"]))
 
 
 # ---------- 关联方 ----------

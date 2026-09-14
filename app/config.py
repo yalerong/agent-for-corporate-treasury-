@@ -15,14 +15,14 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class UserRole(str, Enum):
+class UserRole(str, Enum):  # noqa: UP042 - keep Python 3.11/StrEnum migration out of this change.
     CASHIER = "cashier"
     TREASURY_SUPERVISOR = "treasury_supervisor"
     TREASURY_MANAGER = "treasury_manager"
     ADMIN = "admin"
 
 
-class Intent(str, Enum):
+class Intent(str, Enum):  # noqa: UP042 - keep Python 3.11/StrEnum migration out of this change.
     INQUIRY = "inquiry"
     RECONCILIATION = "reconciliation"
     TRANSFER = "transfer"
@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     payment_mock_mode: bool = True
 
     audit_log_path: Path = Path("./logs/audit.jsonl")
+    api_cashier_token: SecretStr = SecretStr("")
+    api_supervisor_token: SecretStr = SecretStr("")
+    api_manager_token: SecretStr = SecretStr("")
+    api_admin_token: SecretStr = SecretStr("")
 
 
 @lru_cache(maxsize=1)

@@ -1,7 +1,11 @@
 """PR4 核验+归因：三态判定、降级状态机（永不自动 refuted）、贡献分解手算、日历对齐。"""
+import sqlite3
+import sys
+
 import attribution
 import pandas as pd
 import pattern_store as ps
+import pytest
 import validate
 import yaml
 
@@ -110,6 +114,95 @@ def test_hit_resets_streak():
     p = doc["patterns"][0]
     assert p["evidence"]["fail_streak"] == 0
     assert p["status"] == "approved"
+
+
+def test_require_payment_fresh_fails_when_cutoff_stale():
+    pay = pay_df([("2026-07-29", "A", "P", "USD", "X", 100.0)])
+    with pytest.raises(SystemExit, match="付款数据"):
+        validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=1)
+
+    validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=2)
+
+
+def test_validation_asof_rejects_future_invalid_and_nat_values():
+    pay = pay_df([("2026-07-29", "A", "P", "USD", "X", 100.0)])
+    today = pd.Timestamp("2026-07-31")
+
+    assert validate.resolve_validation_asof("2026-07-30", pay, False, today) == pd.Timestamp(
+        "2026-07-30"
+    )
+    with pytest.raises(SystemExit, match="拒绝核验未来期间"):
+        validate.resolve_validation_asof("2026-08-01", pay, False, today)
+    with pytest.raises(SystemExit, match="无法解析"):
+        validate.resolve_validation_asof("not-a-date", pay, False, today)
+    with pytest.raises(SystemExit, match="无法解析"):
+        validate.resolve_validation_asof("NaT", pay, False, today)
+
+
+def test_main_filters_asof_before_freshness_gate(tmp_dir, monkeypatch):
+    db = tmp_dir / "treasury.db"
+    con = sqlite3.connect(db)
+    pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-01", "2026-08-15"]),
+        "entity": ["A", "A"],
+        "project": ["P", "P"],
+        "currency": ["USD", "USD"],
+        "payee": ["X", "X"],
+        "amount": [100.0, 100.0],
+    }).to_sql("payments", con, index=False)
+    con.close()
+    pat = tmp_dir / "patterns.yaml"
+    pat.write_text(
+        yaml.safe_dump({"meta": {"schema_version": 2}, "patterns": []}, allow_unicode=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(validate, "DB", db)
+    monkeypatch.setattr(validate, "PAT", pat)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate.py",
+            "--require-fresh",
+            "--asof",
+            "2026-07-31",
+            "--max-payment-age-days",
+            "1",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="付款数据截止 2026-07-01"):
+        validate.main()
+
+
+def test_explicit_historical_replay_does_not_write_pattern_state(tmp_dir, monkeypatch):
+    db = tmp_dir / "treasury.db"
+    con = sqlite3.connect(db)
+    pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-31"]),
+        "entity": ["A"], "project": ["P"], "currency": ["USD"],
+        "payee": ["X"], "amount": [100.0],
+    }).to_sql("payments", con, index=False)
+    con.close()
+    pat = tmp_dir / "patterns.yaml"
+    original = yaml.safe_dump(
+        {"meta": {"schema_version": 2}, "patterns": []},
+        allow_unicode=True,
+    )
+    pat.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(validate, "DB", db)
+    monkeypatch.setattr(validate, "PAT", pat)
+    monkeypatch.setattr(sys, "argv", ["validate.py", "--asof", "2026-07-31"])
+
+    def mutate_for_replay(doc, _pay, _asof):
+        doc["meta"]["would_have_mutated"] = True
+        return {"checked": 0, "violated": [], "demoted": []}
+
+    monkeypatch.setattr(validate, "run", mutate_for_replay)
+    validate.main()
+
+    assert pat.read_text(encoding="utf-8") == original
+    assert not pat.with_suffix(".yaml.bak").exists()
 
 
 # ---------- 归因两函数 ----------

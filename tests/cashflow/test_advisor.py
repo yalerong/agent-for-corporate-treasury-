@@ -486,6 +486,142 @@ def test_stale_rule_data():
     assert len(out) == 1 and out[0].startswith("R-009") and "26 天前" in out[0]
 
 
+def test_require_fresh_rule_data_requires_sensitive_as_of():
+    valid = {"id": "R-ok", "type": "weekly_inflow", "status": "approved",
+             "as_of": "2026-09-07", "params": {"currency": "USDT", "low": 1, "high": 2}}
+    advisor.require_fresh_rule_data([valid], today=pd.Timestamp("2026-09-07"))
+
+    missing = {**valid, "id": "R-missing"}
+    missing.pop("as_of")
+    with pytest.raises(SystemExit, match="R-missing"):
+        advisor.require_fresh_rule_data([missing], today=pd.Timestamp("2026-09-07"))
+
+    bad = {**valid, "id": "R-bad", "as_of": "not-a-date"}
+    with pytest.raises(SystemExit, match="R-bad"):
+        advisor.require_fresh_rule_data([bad], today=pd.Timestamp("2026-09-07"))
+
+    nat = {**valid, "id": "R-nat", "as_of": "NaT"}
+    with pytest.raises(SystemExit, match="R-nat"):
+        advisor.require_fresh_rule_data([nat], today=pd.Timestamp("2026-09-07"))
+
+    future = {**valid, "id": "R-future", "as_of": "2026-09-08"}
+    with pytest.raises(SystemExit, match="R-future"):
+        advisor.require_fresh_rule_data([future], today=pd.Timestamp("2026-09-07"))
+
+
+def test_require_fresh_checks_advisor_inputs():
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-09"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+    advisor.require_fresh_inputs(
+        "2026.09.07-2026.09.11", balances_asof="2026-09-11",
+        flows=flows, max_age_days=2, reference_date="2026-09-11")
+
+    with pytest.raises(SystemExit, match="余额快照"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-08",
+            flows=flows, max_age_days=2, reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="流水"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-11",
+            flows=flows.iloc[0:0], max_age_days=2, reference_date="2026-09-11")
+
+    with pytest.raises(SystemExit, match="晚于核验基准日"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-12",
+            flows=flows, max_age_days=2, reference_date="2026-09-11")
+
+
+def test_require_fresh_rejects_invalid_nat_and_stale_week_inputs():
+    fresh_flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-14"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+    nat_flows = pd.DataFrame({
+        "date": pd.to_datetime(["NaT"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+
+    with pytest.raises(SystemExit, match="balances-asof"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="not-a-date",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="balances-asof"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="NaT",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="require-fresh"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="2026-09-14",
+            flows=nat_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="2026.09.07-2026.09.11"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-14",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+
+
+def test_require_fresh_fx_rate_only_when_usdmxn_route_is_used():
+    bal = bal_df([("NORTH SA", "pay_NORTH_CW", "MXN", 2e6)])
+    mxn_gaps = pd.DataFrame({"entity": ["MX BETA"], "currency": ["MXN"], "need": [100.0],
+                             "avail": [0.0], "transit": [0.0], "gap": [100.0]})
+    assert advisor.resolve_fx_usdmxn(
+        mxn_gaps, bal, RULES, None, None, require_fresh=True,
+        reference_date="2026-09-11") == 17.5
+
+    usd_gaps = pd.DataFrame({"entity": ["MX BETA"], "currency": ["USD"], "need": [100.0],
+                             "avail": [0.0], "transit": [0.0], "gap": [100.0]})
+    with pytest.raises(SystemExit, match="--fx-usdmxn"):
+        advisor.resolve_fx_usdmxn(
+            usd_gaps, bal, RULES, None, None, require_fresh=True,
+            reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="--fx-usdmxn-asof"):
+        advisor.resolve_fx_usdmxn(
+            usd_gaps, bal, RULES, 17.1, None, require_fresh=True,
+            reference_date="2026-09-11")
+
+    assert advisor.resolve_fx_usdmxn(
+        usd_gaps, bal, RULES, 17.1, "2026-09-11", require_fresh=True,
+        reference_date="2026-09-11") == 17.1
+
+    path_rules = RULES + [{
+        "id": "R-path", "type": "payment_path", "status": "approved",
+        "params": {"entity": "MX BETA", "fallback_usd": "渠道代付"},
+    }]
+    assert advisor.resolve_fx_usdmxn(
+        usd_gaps, bal, path_rules, None, None, require_fresh=True,
+        reference_date="2026-09-11") == 17.5
+
+
+def test_require_fresh_fx_rate_rejects_stale_invalid_and_future_asof():
+    bal = bal_df([("NORTH SA", "pay_NORTH_CW", "MXN", 2e6)])
+    gaps = pd.DataFrame({"entity": ["MX BETA"], "currency": ["USD"], "need": [100.0],
+                         "avail": [0.0], "transit": [0.0], "gap": [100.0]})
+    with pytest.raises(SystemExit, match="无法解析"):
+        advisor.resolve_fx_usdmxn(
+            gaps, bal, RULES, 17.1, "bad-date", require_fresh=True,
+            reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="晚于核验基准日"):
+        advisor.resolve_fx_usdmxn(
+            gaps, bal, RULES, 17.1, "2026-09-12", require_fresh=True,
+            reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="超过 1 天"):
+        advisor.resolve_fx_usdmxn(
+            gaps, bal, RULES, 17.1, "2026-09-09", require_fresh=True,
+            reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="有限正数"):
+        advisor.resolve_fx_usdmxn(
+            gaps, bal, RULES, float("nan"), "2026-09-11", require_fresh=True,
+            reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="无法解析"):
+        advisor.resolve_fx_usdmxn(
+            gaps, bal, RULES, 17.1, "NaT", require_fresh=True,
+            reference_date="2026-09-11")
+
+
 def test_lark_approval_matching_is_token_exact():
     plan = plan_df([row("HK GAMMA", 1000, "USD", lark="123")])
     flows = pd.DataFrame({

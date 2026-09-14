@@ -38,6 +38,17 @@ def report(root: Path) -> str:
     return (root / "runs" / "2026-07-30" / "report.md").read_text(encoding="utf-8")
 
 
+def clear_approvals(root: Path) -> None:
+    doc = load_doc(root)
+    for p in doc["patterns"]:
+        if p.get("status") == "approved":
+            p["status"] = "candidate"
+            p.pop("approved_by", None)
+            p.pop("approved_at", None)
+    (root / "patterns" / "patterns.yaml").write_text(
+        yaml.dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
 # ---------- pattern_id ----------
 
 def test_pattern_id_order_insensitive():
@@ -115,6 +126,7 @@ def test_v1_approved_survives_patterns_rerun_without_migrate(iso_root):
 # ---------- 审批 CLI ----------
 
 def test_approve_all_high_then_refute_sticks(iso_root):
+    clear_approvals(iso_root)
     run_script("approve.py", iso_root, "stats")
     run_script("approve.py", iso_root, "approve", "--all", "--confidence", "high", "--by", "yale")
     doc = load_doc(iso_root)
@@ -147,11 +159,13 @@ def test_refuted_excluded_from_forecast(iso_root):
 # ---------- engine strict 门控 ----------
 
 def test_strict_gating_transition_and_effective(iso_root):
-    # ① 0 approved：strict 自动回退过渡模式，数字仍按置信度口径出（防空报告）
+    clear_approvals(iso_root)
+    # ① 0 approved：strict 真正 fail-closed，不得自动回退 high
     run_script("engine.py", iso_root, "--strict-approval")
     rep = report(iso_root)
-    assert "过渡模式" in rep
-    assert "**CNY**: 未来4周购汇需求 11,880" in rep
+    assert "过渡模式" not in rep
+    assert "fail-closed" in rep
+    assert "**CNY**: 未来4周购汇需求 11,880" not in rep
 
     # ② 批掉全部 high 后 strict 生效：approved 集合==high 集合，数字应与置信度口径一致
     run_script("approve.py", iso_root, "approve", "--all", "--confidence", "high", "--by", "yale")

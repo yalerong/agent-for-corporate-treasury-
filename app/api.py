@@ -4,7 +4,7 @@
 - POST /api/v1/chat              通用对话，自动路由到对应 Agent
 - POST /api/v1/approvals/{tid}   HITL 人工确认，恢复中断的 thread
 - GET  /api/v1/knowledge         双轨知识库直查（绕过 Agent，给 UI 调试用）
-- GET  /api/v1/audit/logs        审计日志查询（仅 admin 可调，当前未做鉴权）
+- GET  /api/v1/audit/logs        审计日志查询（仅 admin Bearer token 可调）
 - GET  /healthz                  健康检查
 
 启动方式：
@@ -15,25 +15,31 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from app.config import Intent, UserRole, get_settings
+from app.auth import role_for_bearer_token
+from app.config import Intent, UserRole, get_settings, role_can
 from app.graph import build_graph
 
 app = FastAPI(
     title="Treasury Agent API",
     version="0.1.0",
-    description="企业资金智能体对外接口（Phase 2 早期，未做鉴权）",
+    description="企业资金智能体对外接口（Phase 2）",
 )
+
+_bearer = HTTPBearer(auto_error=False)
+_token_auth = Security(_bearer)
 
 # 图实例必须在进程内单例：每次 build_graph() 会新建 MemorySaver，
 # 否则 HITL 暂停的 thread 在下次请求里找不到。
 _graph_singleton = None
+_pending_approvals: dict[str, Intent] = {}
 
 
 def _graph():
@@ -50,32 +56,74 @@ def _extract_interrupts(out: dict) -> list:
     return list(raw) if isinstance(raw, (list, tuple)) else [raw]
 
 
+def _approval_task(payload: Any) -> Intent:
+    task = payload.get("task") if isinstance(payload, dict) else None
+    try:
+        return Intent(task)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail="approval interrupt missing valid task",
+        ) from e
+
+
+def current_user_role(
+    credentials: HTTPAuthorizationCredentials | None = _token_auth,
+) -> UserRole:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+    role = role_for_bearer_token(credentials.credentials, get_settings())
+    if role is None:
+        raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+    return role
+
+
+def require_role(*allowed: UserRole):
+    role_dep = Depends(current_user_role)
+
+    def dependency(role: UserRole = role_dep) -> UserRole:
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="insufficient role")
+        return role
+
+    return dependency
+
+
+_current_role = Depends(current_user_role)
+_approver_role = Depends(require_role(
+    UserRole.TREASURY_SUPERVISOR,
+    UserRole.TREASURY_MANAGER,
+    UserRole.ADMIN,
+))
+_admin_role = Depends(require_role(UserRole.ADMIN))
+
+
 # ── /chat ──────────────────────────────────────────────────────
 
 
 class ChatRequest(BaseModel):
-    role: str = Field(description="操作者角色，对应 UserRole 枚举")
     message: str = Field(description="自然语言请求")
-    task: Optional[str] = Field(None, description="可选：显式指定 Intent，跳过 LLM 意图分类")
-    thread_id: Optional[str] = Field(None, description="可选：恢复指定 thread；不传则新建")
+    task: str | None = Field(None, description="可选：admin 显式指定 Intent，跳过 LLM 意图分类")
+    thread_id: str | None = Field(None, description="可选：恢复指定 thread；不传则新建")
+    role: str | None = Field(None, description="已废弃：服务端忽略客户端自报角色")
 
 
 class ChatResponse(BaseModel):
     thread_id: str
     status: Literal["completed", "interrupted", "rejected"]
-    final_output: Optional[str] = None
-    current_role: Optional[str] = None
-    interrupt_payload: Optional[dict[str, Any]] = None
+    final_output: str | None = None
+    current_role: str | None = None
+    interrupt_payload: dict[str, Any] | None = None
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
-    if req.role not in {r.value for r in UserRole}:
-        raise HTTPException(400, detail=f"invalid role: {req.role}")
+def chat(req: ChatRequest, role: UserRole = _current_role) -> ChatResponse:
     if req.task and req.task not in {i.value for i in Intent}:
         raise HTTPException(400, detail=f"invalid task: {req.task}")
+    if req.task and role != UserRole.ADMIN:
+        raise HTTPException(403, detail="task override requires admin role")
 
-    state: dict = {"user_role": req.role, "messages": [HumanMessage(content=req.message)]}
+    state: dict = {"user_role": role.value, "messages": [HumanMessage(content=req.message)]}
     if req.task:
         state["current_task"] = req.task
 
@@ -88,10 +136,12 @@ def chat(req: ChatRequest) -> ChatResponse:
     if interrupts:
         first = interrupts[0]
         payload = getattr(first, "value", first)
+        _pending_approvals[tid] = _approval_task(payload)
         return ChatResponse(
             thread_id=tid, status="interrupted", interrupt_payload=payload
         )
 
+    _pending_approvals.pop(tid, None)
     if out.get("current_role") == "rejected":
         return ChatResponse(
             thread_id=tid,
@@ -113,18 +163,34 @@ def chat(req: ChatRequest) -> ChatResponse:
 
 class ApprovalRequest(BaseModel):
     approved: bool
-    instruction_id: Optional[str] = None
-    reason: Optional[str] = None
+    instruction_id: str | None = None
+    reason: str | None = None
 
 
 @app.post("/api/v1/approvals/{thread_id}", response_model=ChatResponse)
-def approve(thread_id: str, req: ApprovalRequest) -> ChatResponse:
+def approve(
+    thread_id: str,
+    req: ApprovalRequest,
+    role: UserRole = _approver_role,
+) -> ChatResponse:
+    pending_task = _pending_approvals.get(thread_id)
+    if pending_task is None:
+        raise HTTPException(status_code=404, detail="thread not found or not waiting for approval")
+    instruction_id = req.instruction_id.strip() if req.instruction_id is not None else None
+    reason = req.reason.strip() if req.reason is not None else None
+    if req.approved and not instruction_id:
+        raise HTTPException(status_code=400, detail="approved decision requires instruction_id")
+    if not req.approved and not reason:
+        raise HTTPException(status_code=400, detail="rejected decision requires reason")
+    if not role_can(role, pending_task):
+        raise HTTPException(status_code=403, detail="insufficient task approval role")
+
     config = {"configurable": {"thread_id": thread_id}}
     payload: dict[str, Any] = {"approved": req.approved}
-    if req.instruction_id:
-        payload["instruction_id"] = req.instruction_id
-    if req.reason:
-        payload["reason"] = req.reason
+    if instruction_id:
+        payload["instruction_id"] = instruction_id
+    if reason:
+        payload["reason"] = reason
 
     try:
         out = _graph().invoke(Command(resume=payload), config=config)
@@ -134,6 +200,7 @@ def approve(thread_id: str, req: ApprovalRequest) -> ChatResponse:
     status: Literal["completed", "rejected"] = (
         "rejected" if out.get("current_role") == "rejected" else "completed"
     )
+    _pending_approvals.pop(thread_id, None)
     return ChatResponse(
         thread_id=thread_id,
         status=status,
@@ -150,6 +217,7 @@ def knowledge(
     q: str = Query(description="查询文本"),
     target: Literal["industry", "enterprise", "both"] = "both",
     k: int = Query(default=4, ge=1, le=20),
+    _role: UserRole = _current_role,
 ) -> dict[str, list[dict[str, str]]]:
     from app.tools.knowledge import _store  # internal singleton
 
@@ -173,7 +241,8 @@ def knowledge(
 @app.get("/api/v1/audit/logs")
 def audit_logs(
     limit: int = Query(default=100, ge=1, le=10000),
-    tool: Optional[str] = Query(default=None, description="按 Tool 名筛选"),
+    tool: str | None = Query(default=None, description="按 Tool 名筛选"),
+    _role: UserRole = _admin_role,
 ) -> list[dict[str, Any]]:
     path = Path(get_settings().audit_log_path)
     if not path.exists():

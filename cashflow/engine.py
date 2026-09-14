@@ -5,10 +5,9 @@
 build_report 是纯函数，f-string 只做排版，report.md 各节标注 metric_id。
 
 审批门控: strict-approval 默认开——计算只用人工批准(status=approved)的规律；
-approved 为 0 时自动回退按置信度计算并在报告顶部标注"过渡模式"（防空报告）；
 --no-strict-approval 为逃生口。refuted 规律任何模式都不参与计算与预测。
 
-用法: python engine.py [--asof 2026-07-31] [--no-strict-approval]
+用法: python engine.py [--asof 2026-07-31] [--no-strict-approval] [--require-fresh]
 """
 import argparse
 import json
@@ -31,9 +30,9 @@ def build_report(ctx: dict, mets: dict) -> str:
          f"全部数字由确定性引擎计算，可追溯。\n"]
     if ctx["strict"]:
         L.append("> 门控: strict-approval 开启，计算只用人工批准(approved)的规律。\n")
-    elif ctx["transition"]:
-        L.append("> ⚠️ 过渡模式: strict-approval（默认开）下 approved 规律为 0，"
-                 "本次回退按置信度(high)计算；请用 approve.py 批准规律。\n")
+        if ctx.get("approved_count", 0) == 0:
+            L.append("> ⚠️ strict-approval 下 approved 规律为 0，本次预测与头寸计算 fail-closed；"
+                     "请用 approve.py 批准规律或显式使用 --no-strict-approval。\n")
 
     # 可选节（预算/归因/头寸/关联方/审批/核验）缺数据时跳过，编号按实际出现顺序连续
     numerals = iter("一二三四五六七八")
@@ -63,31 +62,49 @@ def build_report(ctx: dict, mets: dict) -> str:
 
     fc = mets["forecast_4w"]["value"]
     L.append(f"\n## {sec()}、未来4周资金预测（分主体/项目/币种） <!-- metric: forecast_4w -->\n")
-    wl = fc[(fc["source"] == "weekly_level") & (fc["forecast"] > 0)]
-    wk = wl.pivot_table(index=GROUP, columns="week", values="forecast", aggfunc="sum")
-    total_groups = len(wk)
-    wk = wk.assign(_t=wk.sum(axis=1)).nlargest(15, "_t").drop(columns="_t")
-    L.append(wk.to_markdown(floatfmt=",.0f"))
-    if total_groups > 15:
-        L.append(f"\n*按4周合计金额取 Top15 展示，其余 {total_groups - 15} 组见 forecast.csv（未截断）。*")
-    recs = fc[fc["source"].str.startswith("recurring")]
-    if len(recs):
-        L.append("\n**固定付款日提醒**：")
-        for _, r in recs.drop_duplicates(subset=["payee", "week"]).iterrows():
-            L.append(f"- {r['week']}({r['start']}) {r['payee']} ~{r['forecast']:,.0f} "
-                     f"{r['currency']}（{r['source']}）")
+    if fc.empty:
+        L.append("无已批准预测行；forecast.csv 仅保留表头。")
+    else:
+        wl = fc[(fc["source"] == "weekly_level") & (fc["forecast"] > 0)]
+        wk = wl.pivot_table(index=GROUP, columns="week", values="forecast", aggfunc="sum")
+        total_groups = len(wk)
+        if total_groups:
+            wk = wk.assign(_t=wk.sum(axis=1)).nlargest(15, "_t").drop(columns="_t")
+            L.append(wk.to_markdown(floatfmt=",.0f"))
+        else:
+            L.append("无 weekly_level 预测行。")
+        if total_groups > 15:
+            L.append(f"\n*按4周合计金额取 Top15 展示，其余 {total_groups - 15} 组见 forecast.csv（未截断）。*")
+        recs = fc[fc["source"].str.startswith("recurring")]
+        if len(recs):
+            L.append("\n**固定付款日提醒**：")
+            for _, r in recs.drop_duplicates(subset=["payee", "week"]).iterrows():
+                L.append(f"- {r['week']}({r['start']}) {r['payee']} ~{r['forecast']:,.0f} "
+                         f"{r['currency']}（{r['source']}）")
+    candidates = fc.attrs.get("candidates", pd.DataFrame())
+    if len(candidates):
+        cand_n = int((candidates["status"] == "candidate").sum())
+        prov_n = int((candidates["confidence"] == "provisional").sum())
+        L.append(f"\n**候选提示（不参与预测/头寸/FX 计算）**：candidate {cand_n} 行，"
+                 f"provisional {prov_n} 行；批准后才进入 strict 报告。")
 
     pos = mets["position"]["value"]
     if pos is not None:
         L.append(f"\n## {sec()}、头寸与调拨建议（余额快照 {pos['snapshot_date']}）"
                  f" <!-- metric: position -->\n")
-        L.append("| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |")
-        L.append("|---|---:|---:|---:|---|")
-        for r in pos["currency_rows"]:
-            status = "⚠️ 缺口" if r["position"] < 0 else "富余"
-            L.append(f"| {r['currency']} | {r['balance']:,.0f} | {r['outflow']:,.0f} | "
-                     f"{r['position']:,.0f} | {status} |")
-        if pos["events"]:
+        if pos.get("unknown"):
+            L.append("正式预测为空，头寸与调拨建议为 unknown；不把空预测当作 0 流出计算富余。")
+        else:
+            L.append("| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |")
+            L.append("|---|---:|---:|---:|---|")
+            for r in pos["currency_rows"]:
+                if r.get("unknown"):
+                    L.append(f"| {r['currency']} | {r['balance']:,.0f} | unknown | unknown | unknown |")
+                    continue
+                status = "⚠️ 缺口" if r["position"] < 0 else "富余"
+                L.append(f"| {r['currency']} | {r['balance']:,.0f} | {r['outflow']:,.0f} | "
+                         f"{r['position']:,.0f} | {status} |")
+        if not pos.get("unknown") and pos["events"]:
             L.append("")
             for e in pos["events"]:
                 if e["kind"] == "transfer":
@@ -101,6 +118,11 @@ def build_report(ctx: dict, mets: dict) -> str:
 
     fxv = mets["fx_advice"]["value"]
     L.append(f"\n## {sec()}、外汇交易管控建议 <!-- metric: fx_advice -->\n")
+    if fxv.get("unknown"):
+        L.append("正式预测为空，FX 建议为 unknown；不输出购汇区间或余额覆盖结论。")
+    elif fxv.get("unknown_currencies"):
+        currencies = "、".join(fxv["unknown_currencies"])
+        L.append(f"- **{currencies}**: 存在未批准预测行，FX 建议为 unknown；不输出覆盖或购汇结论。")
     for it in fxv["items"]:
         if it["covered"]:
             L.append(f"- **{it['currency']}**: 未来4周预测流出 {it['outflow']:,.0f}，"
@@ -172,9 +194,15 @@ def main():
     ap.add_argument("--asof", default=None)
     ap.add_argument("--strict-approval", action=argparse.BooleanOptionalAction, default=True,
                     help="strict: 计算只用人工批准(status=approved)的规律；--no-strict-approval 关闭")
+    ap.add_argument("--require-fresh", action="store_true",
+                    help="生产硬门：付款数据必须覆盖 asof 附近，否则停止")
+    ap.add_argument("--max-payment-age-days", type=int, default=1,
+                    help="--require-fresh 时允许付款数据最晚距 asof N 天（默认 1）")
     args = ap.parse_args()
 
-    ctx = build_context(args.asof, args.strict_approval)
+    ctx = build_context(args.asof, args.strict_approval,
+                        require_fresh=args.require_fresh,
+                        max_payment_age_days=args.max_payment_age_days)
     mets = compute_all(ctx)
     outdir = ROOT / "runs" / ctx["asof"].strftime("%Y-%m-%d")
     outdir.mkdir(parents=True, exist_ok=True)

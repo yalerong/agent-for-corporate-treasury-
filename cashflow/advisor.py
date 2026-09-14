@@ -19,9 +19,10 @@
   python advisor.py --plan 资金计划表.xlsx --balances 余额总览.xlsx \
       [--week 2026.09.07-2026.09.11] [--liushui 流水查询_原始流水.xlsx] [--paid paid.yaml] \
       [--transfers 调拨申请导出.xlsx|transfers.yaml] [--rules ...] [--map ...] \
-      [--fx-usdmxn 17.5] [--out advice]
+      [--fx-usdmxn 17.5 --fx-usdmxn-asof 2026-09-07] [--out advice]
 """
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -41,7 +42,8 @@ from advisor_inputs import (
 from constants import get_root
 
 AMT_TOL = 0.01  # paid 按金额匹配时的容差
-# 自动核销只看"对外出款"类流水；内部划转/提现/放款等不参与核销但保留给在途单判定与账户质检。
+FRESHNESS_RULE_TYPES = {"weekly_inflow", "usdt_wealth_unlocked"}
+# 自动核销只看“对外出款”类流水；内部划转/提现/放款等不参与核销但保留给在途单判定与账户质检。
 # 2026-08-24 挑错：「本金出款」（基金退出）不在名单里漏看 36.5 万；2026-08-31 加「基金」。
 PAY_CLASS_PREFIX = ("账单出款", "税费出款", "工资薪酬", "注资款出款", "员工报销/福利",
                     "房租物业水电出款", "利息出款", "本金出款", "基金")
@@ -328,16 +330,134 @@ def stale_rule_data(rules: list[dict], max_age_days: int = 21,
     today = today or pd.Timestamp.today().normalize()
     out = []
     for r in rules:
+        requires_as_of = r.get("type") in FRESHNESS_RULE_TYPES
         as_of = r.get("as_of") or (r.get("params") or {}).get("as_of")
         if not as_of:
+            if requires_as_of:
+                out.append(f"{r['id']} 内嵌数据缺少 as_of，无法确认是否新鲜")
             continue
         try:
-            age = (today - pd.Timestamp(str(as_of))).days
+            parsed_as_of = pd.Timestamp(str(as_of))
         except (ValueError, TypeError):
+            out.append(f"{r['id']} 内嵌数据 as_of={as_of} 无法解析")
+            continue
+        if pd.isna(parsed_as_of):
+            out.append(f"{r['id']} 内嵌数据 as_of={as_of} 无法解析")
+            continue
+        age = (today - parsed_as_of).days
+        if age < 0:
+            out.append(f"{r['id']} 内嵌数据采集日 {as_of} 晚于核验日 {today.date()} (future)")
             continue
         if age > max_age_days:
             out.append(f"{r['id']} 内嵌数据采集于 {as_of}（{age} 天前），超过 {max_age_days} 天——用前重核")
     return out
+
+
+def require_fresh_rule_data(rules: list[dict], max_age_days: int = 21,
+                            today: pd.Timestamp | None = None) -> None:
+    stale = stale_rule_data(rules, max_age_days=max_age_days, today=today)
+    if stale:
+        raise SystemExit(
+            "规则内嵌数据已过期，停止生成建议单。请重核 as_of 后再跑，"
+            "或仅在演练旧数据时不要启用 --require-fresh。\n"
+            + "\n".join(f"- {line}" for line in stale)
+        )
+
+
+def require_fresh_inputs(week: str, balances_asof: str | pd.Timestamp | None,
+                         flows: pd.DataFrame | None,
+                         max_age_days: int = 1,
+                         reference_date: str | pd.Timestamp | None = None) -> None:
+    _, week_end_s = week.split("-")
+    week_end = pd.Timestamp(week_end_s.replace(".", "-"))
+    reference = pd.Timestamp(reference_date).normalize() if reference_date else pd.Timestamp.today().normalize()
+    if max_age_days < 0:
+        raise SystemExit("--max-input-age-days 不能为负数")
+    week_age = (reference - week_end.normalize()).days
+    if week_age > max_age_days:
+        raise SystemExit(f"付款周 {week} 截止 {week_end.date()} 距核验基准日 {reference.date()} 已 {week_age} 天，"
+                         f"超过 {max_age_days} 天")
+    if balances_asof is None:
+        raise SystemExit("--require-fresh 需要 --balances-asof YYYY-MM-DD")
+    try:
+        bal_asof = pd.Timestamp(balances_asof)
+    except (ValueError, TypeError):
+        raise SystemExit("--balances-asof 无法解析，请使用 YYYY-MM-DD") from None
+    if pd.isna(bal_asof):
+        raise SystemExit("--balances-asof 无法解析，请使用 YYYY-MM-DD")
+    age = (reference - bal_asof.normalize()).days
+    if age < 0:
+        raise SystemExit(f"余额快照 {bal_asof.date()} 晚于核验基准日 {reference.date()}")
+    if age > max_age_days:
+        raise SystemExit(f"余额快照 {bal_asof.date()} 距核验基准日 {reference.date()} 已 {age} 天，"
+                         f"超过 {max_age_days} 天")
+    if flows is None or flows.empty:
+        raise SystemExit("--require-fresh 需要 --liushui，且流水不能为空")
+    latest_flow = flows["date"].max()
+    if pd.isna(latest_flow):
+        raise SystemExit("--require-fresh 需要 --liushui，且流水日期不能为空")
+    flow_age = (reference - latest_flow.normalize()).days
+    if flow_age < 0:
+        raise SystemExit(f"流水截止 {latest_flow.date()} 晚于核验基准日 {reference.date()}")
+    if flow_age > max_age_days:
+        raise SystemExit(f"流水截止 {latest_flow.date()} 距核验基准日 {reference.date()} 已 {flow_age} 天，"
+                         f"超过 {max_age_days} 天")
+
+
+def needs_usdmxn_fx_route(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict]) -> bool:
+    fx_route = {r["params"]["entity"]: r["params"]["side"] for r in rules_of(rules, "fx_route")}
+    pools = build_fx_pools(bal, rules)
+    independent = {r["params"]["entity"] for r in rules_of(rules, "independent_entity")}
+    paths = {r["params"].get("entity"): r["params"] for r in rules_of(rules, "payment_path")}
+    return any(
+        r["currency"] == "USD"
+        and float(r["gap"]) > AMT_TOL
+        and r["entity"] not in independent
+        and not (
+            r["entity"] in paths
+            and (
+                paths[r["entity"]].get("fallback_usd")
+                or paths[r["entity"]].get("fallback_local_ccy")
+                or paths[r["entity"]].get("path")
+            )
+        )
+        and r["entity"] in fx_route
+        and fx_route[r["entity"]] in pools
+        for _, r in gaps.iterrows()
+    )
+
+
+def resolve_fx_usdmxn(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict],
+                      fx_usdmxn: float | None, fx_usdmxn_asof: str | pd.Timestamp | None,
+                      require_fresh: bool, max_age_days: int = 1,
+                      reference_date: str | pd.Timestamp | None = None) -> float:
+    if fx_usdmxn is not None and (not math.isfinite(fx_usdmxn) or fx_usdmxn <= 0):
+        raise SystemExit("--fx-usdmxn 必须为有限正数")
+    if not require_fresh or not needs_usdmxn_fx_route(gaps, bal, rules):
+        return 17.5 if fx_usdmxn is None else fx_usdmxn
+    if fx_usdmxn is None:
+        raise SystemExit("--require-fresh 且存在 USD/MXN 换汇路由时需要显式 --fx-usdmxn")
+    if fx_usdmxn_asof is None:
+        raise SystemExit("--require-fresh 且存在 USD/MXN 换汇路由时需要 --fx-usdmxn-asof YYYY-MM-DD")
+    reference = (
+        pd.Timestamp(reference_date).normalize()
+        if reference_date is not None
+        else pd.Timestamp.today().normalize()
+    )
+    try:
+        rate_asof = pd.Timestamp(fx_usdmxn_asof)
+    except (ValueError, TypeError):
+        raise SystemExit("--fx-usdmxn-asof 无法解析，请使用 YYYY-MM-DD") from None
+    if pd.isna(rate_asof):
+        raise SystemExit("--fx-usdmxn-asof 无法解析，请使用 YYYY-MM-DD")
+    rate_asof = rate_asof.normalize()
+    age = (reference - rate_asof).days
+    if age < 0:
+        raise SystemExit(f"USD/MXN 汇率 as_of {rate_asof.date()} 晚于核验基准日 {reference.date()}")
+    if age > max_age_days:
+        raise SystemExit(f"USD/MXN 汇率 as_of {rate_asof.date()} 距核验基准日 {reference.date()} 已 {age} 天，"
+                         f"超过 {max_age_days} 天")
+    return fx_usdmxn
 
 
 # ---------- 缺口计算 ----------
@@ -598,8 +718,16 @@ def main() -> None:
     ap.add_argument("--transfers", help="在途调拨：transfers.yaml 或 Lark「调拨申请」导出 xlsx（手动/API 版皆可）")
     ap.add_argument("--rules", default=None, help="缺省 CASHFLOW_ROOT/rules/advisor_rules.yaml")
     ap.add_argument("--map", dest="emap", default=None, help="缺省 CASHFLOW_ROOT/rules/advisor_entity_map.yaml")
-    ap.add_argument("--fx-usdmxn", type=float, default=17.5)
+    ap.add_argument("--fx-usdmxn", type=float, default=None)
+    ap.add_argument("--fx-usdmxn-asof",
+                    help="--require-fresh 且真实使用 USD/MXN 路由时声明汇率采集日 YYYY-MM-DD")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--require-fresh", action="store_true",
+                    help="生产硬门：余额快照、流水和规则 as_of 必须覆盖付款周截止附近")
+    ap.add_argument("--balances-asof",
+                    help="--require-fresh 时声明余额导出快照日 YYYY-MM-DD")
+    ap.add_argument("--max-input-age-days", type=int, default=1,
+                    help="--require-fresh 时允许余额/流水距付款周截止 N 天（默认 1）")
     a = ap.parse_args()
 
     rules_path = cfg_path("advisor_rules.yaml", a.rules)
@@ -609,6 +737,8 @@ def main() -> None:
     plan = plan[plan["amount"].notna()].reset_index(drop=True)
     bal = load_balances(a.balances)
     rules = load_rules(rules_path)
+    if a.require_fresh:
+        require_fresh_rule_data(rules)
     emap = load_entity_map(emap_path)
     paid = load_yaml(a.paid, "paid") if a.paid else []
     transfers = load_transfers_any(a.transfers, emap) if a.transfers else []
@@ -629,6 +759,8 @@ def main() -> None:
             plan, payment_flows(flows, rules), week_start=start, week_end=end, emap=emap)
         paid_notes += [n + "——滚存项已付，可从 carryover.yaml 删除" if "滚存项" in n else n
                        for n in auto_notes]
+    if a.require_fresh:
+        require_fresh_inputs(week, a.balances_asof, flows, a.max_input_age_days)
     transit_notes = mark_executed(transfers, flows)
     if flows is not None:
         # 发起时间早于流水窗口的单：执行与否无从判定（可能已在更早的流水里执行），不计在途只提示
@@ -643,9 +775,13 @@ def main() -> None:
     needs, blank = entity_needs(plan, emap)
     avail = entity_avail(bal, emap, rules)
     gaps = compute_gaps(needs, avail, transfers)
-    actions, warns = route(gaps, bal, rules, a.fx_usdmxn)
+    fx_usdmxn = resolve_fx_usdmxn(
+        gaps, bal, rules, a.fx_usdmxn, a.fx_usdmxn_asof, a.require_fresh,
+        max_age_days=a.max_input_age_days)
+    actions, warns = route(gaps, bal, rules, fx_usdmxn)
     warns += ambig
-    warns += stale_rule_data(rules)
+    if not a.require_fresh:
+        warns += stale_rule_data(rules)
     stale = [t for t in transfers if t.get("executed") and str(t.get("status", "")).startswith("审批中")]
     if stale:
         warns.append(f"Lark 状态滞后：{len(stale)} 单「审批中」流水已执行——{'、'.join(t['lark_no'] for t in stale)}；"

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Annotated, Any, Literal, Optional, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -34,13 +34,13 @@ class TreasuryState(TypedDict, total=False):
     user_role: UserRoleStr
     requires_approval: bool
     approval_status: ApprovalStatus
-    approved_instruction_id: Optional[str]
+    approved_instruction_id: str | None
 
     # 业务数据
-    entity_code: Optional[str]
-    amount: Optional[Decimal]
-    currency: Optional[str]
-    counterparty: Optional[str]
+    entity_code: str | None
+    amount: Decimal | None
+    currency: str | None
+    counterparty: str | None
 
     # 知识检索
     industry_context: str

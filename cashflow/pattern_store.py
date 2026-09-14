@@ -14,6 +14,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 SCHEMA_VERSION = 2
@@ -41,6 +42,17 @@ def legacy_key(p: dict) -> str:
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def payments_fingerprint(pay: pd.DataFrame) -> str:
+    """Stable content fingerprint for the exact payments rows used by patterns."""
+    if "row_hash" not in pay.columns:
+        raise ValueError("payments.row_hash 缺失")
+    hashes = pay["row_hash"].astype("string")
+    if hashes.isna().any() or hashes.str.strip().eq("").any():
+        raise ValueError("payments.row_hash 为空")
+    payload = "\n".join(sorted(hashes.astype(str)))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def status_of(p: dict) -> str:

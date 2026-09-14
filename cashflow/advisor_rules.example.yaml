@@ -43,6 +43,7 @@ rules:
   - id: R-005
     type: weekly_inflow             # 周度自然回流（保守估 low，先抵扣再谈缺口）
     status: approved
+    as_of: "2026-08-02"
     params:
       currency: USDT
       low: 100000                   # 保守估：只作滚动覆盖，不作硬截止日的资金来源
@@ -56,6 +57,7 @@ rules:
   - id: R-006
     type: usdt_wealth_unlocked      # 已过锁定期、可随时赎回的理财（仅作后备）
     status: approved
+    as_of: "2026-08-02"
     params: {amount: 100000, note: "交易所理财已解锁部分"}
     statement: "理财只作后备，回流不足才赎"
     source: "理财台账示例"

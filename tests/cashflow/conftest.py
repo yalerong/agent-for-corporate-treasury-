@@ -27,8 +27,21 @@ def pipeline_root() -> Path:
     root = Path(tempfile.mkdtemp(prefix="treasury_cf_"))
     try:
         for script in ("make_sample.py", "ingest.py", "ingest_balances.py",
-                       "patterns.py", "validate.py", "engine.py"):
+                       "patterns.py", "validate.py"):
             run_script(script, root)
+        run_script("approve.py", root, "approve", "--all", "--confidence", "high", "--by", "fixture")
+        run_script("engine.py", root)
         yield root
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture()
+def iso_root(pipeline_root) -> Path:
+    """Copy the shared deterministic pipeline into a per-test mutable sandbox."""
+    dst = Path(tempfile.mkdtemp(prefix="treasury_cf_iso_"))
+    try:
+        shutil.copytree(pipeline_root, dst, dirs_exist_ok=True)
+        yield dst
+    finally:
+        shutil.rmtree(dst, ignore_errors=True)
