@@ -486,6 +486,31 @@ def test_stale_rule_data():
     assert len(out) == 1 and out[0].startswith("R-009") and "26 天前" in out[0]
 
 
+def test_require_fresh_checks_advisor_inputs():
+    flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-09"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+    advisor.require_fresh_inputs(
+        "2026.09.07-2026.09.11", balances_asof="2026-09-11",
+        flows=flows, max_age_days=2, reference_date="2026-09-11")
+
+    with pytest.raises(SystemExit, match="余额快照"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-08",
+            flows=flows, max_age_days=2, reference_date="2026-09-11")
+    with pytest.raises(SystemExit, match="流水"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-11",
+            flows=flows.iloc[0:0], max_age_days=2, reference_date="2026-09-11")
+
+    with pytest.raises(SystemExit, match="晚于核验基准日"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-12",
+            flows=flows, max_age_days=2, reference_date="2026-09-11")
+
+
 def test_lark_approval_matching_is_token_exact():
     plan = plan_df([row("HK GAMMA", 1000, "USD", lark="123")])
     flows = pd.DataFrame({

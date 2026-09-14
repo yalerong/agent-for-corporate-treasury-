@@ -34,13 +34,19 @@ python ingest.py            # 付款流水标准化入库 SQLite（幂等，带�
 python ingest_balances.py   # 余额快照入库（finweb 总览导出格式；接口直取用 ingest_balances_api.py）
 python patterns.py          # 学习环：提炼规律 → patterns/patterns.yaml（三态 schema v2）
 python validate.py          # 核验环：hit/violated/uncertain 写回 evidence，连续失败自动降级
-python approve.py stats     # 审批 CLI：list / approve / refute——批准(approved)才进计算
+python approve.py stats     # 查看待审批规律
+python approve.py approve --all --confidence high --by analyst  # 明确批准后才进 strict 计算
 python engine.py            # 行动环：八节报告+forecast.csv+lineage.json → runs/<date>/
 python llm_patterns.py      # 可选 LLM 归纳环：聚合摘要→候选规律（无 LLM_API_KEY 自动跳过）
 python ui.py                # 本地审批台：报告/规律审批/预测明细 → http://127.0.0.1:8787
 ```
 
 接入真实数据只需两步：复制 `column_map.example.yaml` 为 `column_map.yaml` 改成你的导出列名；把 xlsx/csv 丢进 `data/raw/`。
+
+生产巡检请显式启用新鲜度硬门：`python validate.py --require-fresh`、
+`python engine.py --require-fresh`；调拨建议使用
+`advisor.py --require-fresh --balances-asof YYYY-MM-DD --liushui <流水文件>`。
+历史回放不启用该开关，或显式传入回放日 `--asof`。
 
 针对具体系统导出另有专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）；余额双路径——`ingest_balances.py`（finweb 余额总览 Excel 导出；`fetch_finweb.py` 默认落到 `data/raw/balances/`）与 `ingest_balances_api.py`（finweb 接口直取，`FINWEB_BASE_URL`/`FINWEB_TOKEN`）。
 
@@ -71,7 +77,7 @@ python ui.py                # 本地审批台：报告/规律审批/预测明细
 **学习环**（自己总结规律）：`patterns.py` 每次复盘从全量历史重新提炼三类规律——周度付款基准（缺失周补零，防稀疏高估）、固定节奏付款（自动识别发薪/房租/税期/关联方，并从周度基线中剔除防重复计数）、月内集中付款日。规律库是三态 schema（每条带 `pattern_id`+审计字段）：
 
 - `candidate` → 重算自动产生，等人工审批；`provisional` 置信度的只在报告提示，**不进任何计算**
-- `approved` → 人工批准（`approve.py`，非交互 ssh 友好）才进引擎计算——**strict 门控默认开**，approved=0 时自动回退置信度口径并标注"过渡模式"防空报告
+- `approved` → 人工批准（`approve.py`，非交互 ssh 友好）才进引擎计算——**strict 门控默认开**，approved=0 时正式预测、头寸与 FX 计算 fail-closed；只有显式 `--no-strict-approval` 才按 high-confidence 口径运行
 - `refuted` → 只能人为否决，重算永不复活（防重提）
 - `validate.py` 核验环用最近付款回测每条规律（hit/violated/uncertain 三态证据），违反明细进报告人审清单；连续 2 次失败的 approved **自动降级回 candidate**（永不自动 refuted）
 - 人工状态按 `pattern_id` 在重算时继承；每份报告钉规律库版本，八节各标 metric_id，数值血缘落 `lineage.json`，审计可重放
@@ -97,6 +103,10 @@ python ui.py                # 本地审批台：报告/规律审批/预测明细
 ## 对话智能体（app/）
 
 LangGraph 多智能体框架：意图分类路由、双轨知识库 RAG（行业法规 + 企业制度，Qdrant + bge 本地 embedding）、HITL 人工确认节点、审计日志与敏感信息脱敏工具、Gradio 本地 UI。详见 [DESIGN.md](DESIGN.md)。
+
+FastAPI 的 `/healthz` 保持公开；所有 `/api/v1/*` 端点要求 Bearer token。服务端通过
+`API_CASHIER_TOKEN`、`API_SUPERVISOR_TOKEN`、`API_MANAGER_TOKEN`、`API_ADMIN_TOKEN`
+把 token 映射为角色，不再信任请求体自报角色；四项全部留空时 API 默认拒绝访问。
 
 ## 多智能体协作 demo（一条命令，无需任何 Key）
 

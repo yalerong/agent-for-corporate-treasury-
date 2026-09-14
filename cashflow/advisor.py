@@ -340,6 +340,49 @@ def stale_rule_data(rules: list[dict], max_age_days: int = 21,
     return out
 
 
+def require_fresh_rule_data(rules: list[dict], max_age_days: int = 21,
+                            today: pd.Timestamp | None = None) -> None:
+    stale = stale_rule_data(rules, max_age_days=max_age_days, today=today)
+    if stale:
+        raise SystemExit(
+            "规则内嵌数据已过期，停止生成建议单。请重核 as_of 后再跑，"
+            "或仅在演练旧数据时不要启用 --require-fresh。\n"
+            + "\n".join(f"- {line}" for line in stale)
+        )
+
+
+def require_fresh_inputs(week: str, balances_asof: str | pd.Timestamp | None,
+                         flows: pd.DataFrame | None,
+                         max_age_days: int = 1,
+                         reference_date: str | pd.Timestamp | None = None) -> None:
+    _, week_end_s = week.split("-")
+    week_end = pd.Timestamp(week_end_s.replace(".", "-"))
+    reference = min(
+        pd.Timestamp(reference_date).normalize() if reference_date else pd.Timestamp.today().normalize(),
+        week_end.normalize(),
+    )
+    if max_age_days < 0:
+        raise SystemExit("--max-input-age-days 不能为负数")
+    if balances_asof is None:
+        raise SystemExit("--require-fresh 需要 --balances-asof YYYY-MM-DD")
+    bal_asof = pd.Timestamp(balances_asof)
+    age = (reference - bal_asof.normalize()).days
+    if age < 0:
+        raise SystemExit(f"余额快照 {bal_asof.date()} 晚于核验基准日 {reference.date()}")
+    if age > max_age_days:
+        raise SystemExit(f"余额快照 {bal_asof.date()} 距核验基准日 {reference.date()} 已 {age} 天，"
+                         f"超过 {max_age_days} 天")
+    if flows is None or flows.empty:
+        raise SystemExit("--require-fresh 需要 --liushui，且流水不能为空")
+    latest_flow = flows["date"].max()
+    flow_age = (reference - latest_flow.normalize()).days
+    if flow_age < 0:
+        raise SystemExit(f"流水截止 {latest_flow.date()} 晚于核验基准日 {reference.date()}")
+    if flow_age > max_age_days:
+        raise SystemExit(f"流水截止 {latest_flow.date()} 距核验基准日 {reference.date()} 已 {flow_age} 天，"
+                         f"超过 {max_age_days} 天")
+
+
 # ---------- 缺口计算 ----------
 
 def entity_needs(plan: pd.DataFrame, emap: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -600,6 +643,12 @@ def main() -> None:
     ap.add_argument("--map", dest="emap", default=None, help="缺省 CASHFLOW_ROOT/rules/advisor_entity_map.yaml")
     ap.add_argument("--fx-usdmxn", type=float, default=17.5)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--require-fresh", action="store_true",
+                    help="生产硬门：余额快照、流水和规则 as_of 必须覆盖付款周截止附近")
+    ap.add_argument("--balances-asof",
+                    help="--require-fresh 时声明余额导出快照日 YYYY-MM-DD")
+    ap.add_argument("--max-input-age-days", type=int, default=1,
+                    help="--require-fresh 时允许余额/流水距付款周截止 N 天（默认 1）")
     a = ap.parse_args()
 
     rules_path = cfg_path("advisor_rules.yaml", a.rules)
@@ -609,6 +658,8 @@ def main() -> None:
     plan = plan[plan["amount"].notna()].reset_index(drop=True)
     bal = load_balances(a.balances)
     rules = load_rules(rules_path)
+    if a.require_fresh:
+        require_fresh_rule_data(rules)
     emap = load_entity_map(emap_path)
     paid = load_yaml(a.paid, "paid") if a.paid else []
     transfers = load_transfers_any(a.transfers, emap) if a.transfers else []
@@ -629,6 +680,8 @@ def main() -> None:
             plan, payment_flows(flows, rules), week_start=start, week_end=end, emap=emap)
         paid_notes += [n + "——滚存项已付，可从 carryover.yaml 删除" if "滚存项" in n else n
                        for n in auto_notes]
+    if a.require_fresh:
+        require_fresh_inputs(week, a.balances_asof, flows, a.max_input_age_days)
     transit_notes = mark_executed(transfers, flows)
     if flows is not None:
         # 发起时间早于流水窗口的单：执行与否无从判定（可能已在更早的流水里执行），不计在途只提示
@@ -645,7 +698,8 @@ def main() -> None:
     gaps = compute_gaps(needs, avail, transfers)
     actions, warns = route(gaps, bal, rules, a.fx_usdmxn)
     warns += ambig
-    warns += stale_rule_data(rules)
+    if not a.require_fresh:
+        warns += stale_rule_data(rules)
     stale = [t for t in transfers if t.get("executed") and str(t.get("status", "")).startswith("审批中")]
     if stale:
         warns.append(f"Lark 状态滞后：{len(stale)} 单「审批中」流水已执行——{'、'.join(t['lark_no'] for t in stale)}；"

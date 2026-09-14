@@ -5,8 +5,8 @@ lineage = {pattern_ids, data_range, db_row_count, patterns_generated_at, compute
 整 run 由 engine 落 runs/<date>/lineage.json，report.md 各节标注 metric_id。
 value 是结构化数据（DataFrame/dict/list），排版一律在 engine.build_report。
 
-审批门控在 build_context 定：strict 下计算口径=status==approved 的预测行，
-否则=confidence==high；refuted 任何模式不进预测。
+审批门控在 build_context 定：strict 下计算口径=status==approved 的预测行；
+--no-strict-approval 才显式退到 confidence==high；refuted 任何模式不进预测。
 """
 import sqlite3
 from datetime import timedelta
@@ -24,6 +24,11 @@ PAT = ROOT / "patterns" / "patterns.yaml"
 
 REGISTRY = {}
 
+FORECAST_COLUMNS = [
+    "entity", "project", "currency", "payee", "week", "start", "forecast",
+    "source", "confidence", "status", "pattern_id", "note",
+]
+
 
 def metric(mid: str):
     def deco(fn):
@@ -37,10 +42,26 @@ def load_registry() -> list[dict]:
     return doc["metrics"]
 
 
-def build_context(asof_arg: str | None, strict_flag: bool) -> dict:
-    """加载全部输入并定门控。asof 缺省=规律库数据末日；strict 在 approved=0 时回退过渡模式。"""
+def require_payment_fresh(pay: pd.DataFrame, asof: pd.Timestamp, max_age_days: int) -> None:
+    latest = pay["date"].max()
+    if pd.isna(latest):
+        raise SystemExit("付款数据为空，无法生成报告")
+    lag = (asof.normalize() - latest.normalize()).days
+    if lag > max_age_days:
+        raise SystemExit(f"付款数据截止 {latest.date()}，距 asof {asof.date()} 已 {lag} 天，"
+                         f"超过 {max_age_days} 天")
+
+
+def build_context(asof_arg: str | None, strict_flag: bool,
+                  require_fresh: bool = False, max_payment_age_days: int = 1) -> dict:
+    """加载全部输入并定门控。asof 缺省=规律库数据末日；strict 不自动回退。"""
     pats = ps.load(PAT)
-    seed = pd.Timestamp(asof_arg) if asof_arg else pd.Timestamp(pats["meta"]["data_range"][1])
+    if asof_arg:
+        seed = pd.Timestamp(asof_arg)
+    elif require_fresh:
+        seed = pd.Timestamp.today().normalize()
+    else:
+        seed = pd.Timestamp(pats["meta"]["data_range"][1])
     con = sqlite3.connect(DB)
     pay = pd.read_sql("SELECT * FROM payments WHERE date<=?", con,
                       params=(seed.strftime("%Y-%m-%d"),), parse_dates=["date"])
@@ -60,11 +81,13 @@ def build_context(asof_arg: str | None, strict_flag: bool) -> dict:
         else:
             rp.update(raw)
     asof = pay["date"].max()
-    strict, transition = strict_flag, False
-    if strict and not any(ps.status_of(p) == "approved" for p in pats["patterns"]):
-        strict, transition = False, True
+    if require_fresh:
+        require_payment_fresh(pay, seed, max_payment_age_days)
+    strict = strict_flag
+    approved_count = sum(1 for p in pats["patterns"] if ps.status_of(p) == "approved")
     return {"pay": pay, "pats": pats, "bud": bud, "rp": rp, "asof": asof,
-            "month": asof.strftime("%Y-%m"), "strict": strict, "transition": transition}
+            "month": asof.strftime("%Y-%m"), "strict": strict, "transition": False,
+            "approved_count": approved_count}
 
 
 def compute_all(ctx: dict) -> dict:
@@ -188,13 +211,13 @@ def mom_attribution_metric(ctx, _out):
 @metric("forecast_4w")
 def forecast_4w_metric(ctx, _out):
     pats, asof = ctx["pats"], ctx["asof"]
-    # refuted（人工否决）的规律不进任何预测行
-    usable = [p for p in pats["patterns"] if ps.status_of(p) != "refuted"]
+    # refuted never appears; candidate/provisional rows stay separate from official forecast.
+    all_usable = [p for p in pats["patterns"] if ps.status_of(p) != "refuted"]
     rows = []
     horizon = [(asof + timedelta(days=1 + 7 * i),
                 asof + timedelta(days=7 * (i + 1))) for i in range(4)]
-    levels = [p for p in usable if p["type"] == "weekly_level"]
-    recs = [p for p in usable if p["type"] == "recurring"]
+    levels = [p for p in all_usable if p["type"] == "weekly_level"]
+    recs = [p for p in all_usable if p["type"] == "recurring"]
     for i, (w0, w1) in enumerate(horizon, 1):
         for p in levels:
             amt = p["base_weekly"]
@@ -213,9 +236,8 @@ def forecast_4w_metric(ctx, _out):
                              "confidence": p["confidence"], "status": ps.status_of(p),
                              "pattern_id": p.get("id") or ps.pattern_id(p["type"], p["key"]),
                              "note": ""})
-    fc = pd.DataFrame(rows)
-    if "payee" not in fc.columns:
-        fc["payee"] = ""
+    fc = pd.DataFrame(rows, columns=FORECAST_COLUMNS)
+    fc["payee"] = fc["payee"].fillna("")
     # 自主权滑块：按金额/关键词分档标注 review 列，只标注不拦截
     pol = policy_mod.load_policy()
     if pol is not None and not fc.empty:
@@ -223,7 +245,13 @@ def forecast_4w_metric(ctx, _out):
             policy_mod.review_tier(r["forecast"], r["currency"],
                                    f"{r['entity']}{r['project']}{r['payee']}", pol)
             for _, r in fc.iterrows()]
-    return fc, ([] if fc.empty else list(fc["pattern_id"]))
+    if fc.empty:
+        fc.attrs["candidates"] = fc.copy()
+        return fc, []
+    eligible = fc["status"].eq("approved") if ctx["strict"] else fc["confidence"].eq("high")
+    official = fc[eligible].reset_index(drop=True)
+    official.attrs["candidates"] = fc[~eligible].reset_index(drop=True)
+    return official, ([] if official.empty else list(official["pattern_id"]))
 
 
 # ---------- 头寸与调拨 ----------

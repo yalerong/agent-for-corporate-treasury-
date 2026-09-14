@@ -2,6 +2,7 @@
 import attribution
 import pandas as pd
 import pattern_store as ps
+import pytest
 import validate
 import yaml
 
@@ -110,6 +111,14 @@ def test_hit_resets_streak():
     p = doc["patterns"][0]
     assert p["evidence"]["fail_streak"] == 0
     assert p["status"] == "approved"
+
+
+def test_require_payment_fresh_fails_when_cutoff_stale():
+    pay = pay_df([("2026-07-29", "A", "P", "USD", "X", 100.0)])
+    with pytest.raises(SystemExit, match="付款数据"):
+        validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=1)
+
+    validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=2)
 
 
 # ---------- 归因两函数 ----------

@@ -8,9 +8,10 @@
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings

@@ -9,13 +9,17 @@ from __future__ import annotations
 import functools
 import json
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from app.config import get_settings
 
 F = TypeVar("F", bound=Callable[..., Any])
+SENSITIVE_KEYS = frozenset({
+    "access_token", "api_key", "app_secret", "authorization", "password", "secret", "token",
+})
 
 
 def _safe_json(obj: Any) -> Any:
@@ -25,6 +29,18 @@ def _safe_json(obj: Any) -> Any:
         return obj
     except (TypeError, ValueError):
         return repr(obj)
+
+
+def _redact(obj: Any) -> Any:
+    """Recursively remove common credential fields before they reach disk."""
+    if isinstance(obj, dict):
+        return {
+            key: "***" if str(key).lower() in SENSITIVE_KEYS else _redact(value)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [_redact(value) for value in obj]
+    return obj
 
 
 def _emit(record: dict[str, Any]) -> None:
@@ -61,14 +77,17 @@ def audit(tool_name: str | None = None) -> Callable[[F], F]:
             finally:
                 preview = None
                 if result is not None:
-                    s = str(result)
+                    s = str(_redact(result))
                     preview = s[:500] + ("…" if len(s) > 500 else "")
                 _emit(
                     {
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                         "tool": name,
-                        "args": [_safe_json(a) for a in args],
-                        "kwargs": {k: _safe_json(v) for k, v in kwargs.items()},
+                        "args": [_safe_json(_redact(a)) for a in args],
+                        "kwargs": {
+                            k: "***" if k.lower() in SENSITIVE_KEYS else _safe_json(_redact(v))
+                            for k, v in kwargs.items()
+                        },
                         "duration_ms": round((time.perf_counter() - start) * 1000, 2),
                         "error": error,
                         "result_preview": preview,

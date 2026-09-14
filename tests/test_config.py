@@ -76,7 +76,7 @@ class TestAuthorizationMatrix:
 class TestThresholds:
     def test_large_transfer_matches_design(self):
         # DESIGN.md §4.2.3 route_by_intent 直接引用此常量
-        assert Thresholds.LARGE_TRANSFER == Decimal("5000000")
+        assert Decimal("5000000") == Thresholds.LARGE_TRANSFER
 
     def test_all_thresholds_are_decimal(self):
         for name in ["LARGE_TRANSFER", "AML_REPORT_CORP", "AML_REPORT_PERSONAL", "CROSS_BORDER_DAILY"]:
@@ -130,3 +130,10 @@ class TestSettings:
         assert "sk-do-not-leak" not in str(s)
         # 但可以通过 get_secret_value() 显式读取
         assert s.llm_api_key.get_secret_value() == "sk-do-not-leak"
+
+    def test_api_tokens_are_secret(self, monkeypatch):
+        monkeypatch.setenv("API_ADMIN_TOKEN", "admin-do-not-leak")
+        s = Settings()
+        assert "admin-do-not-leak" not in repr(s)
+        assert "admin-do-not-leak" not in str(s)
+        assert s.api_admin_token.get_secret_value() == "admin-do-not-leak"

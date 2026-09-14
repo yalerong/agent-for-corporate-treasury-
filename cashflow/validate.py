@@ -34,6 +34,16 @@ DB = ROOT / "data" / "db" / "treasury.db"
 PAT = ROOT / "patterns" / "patterns.yaml"
 
 
+def require_payment_fresh(pay: pd.DataFrame, asof: pd.Timestamp, max_age_days: int) -> None:
+    latest = pay["date"].max()
+    if pd.isna(latest):
+        raise SystemExit("付款数据为空，无法核验规律")
+    lag = (asof.normalize() - latest.normalize()).days
+    if lag > max_age_days:
+        raise SystemExit(f"付款数据截止 {latest.date()}，距 asof {asof.date()} 已 {lag} 天，"
+                         f"超过 {max_age_days} 天")
+
+
 def validate_recurring(pay: pd.DataFrame, p: dict, asof: pd.Timestamp) -> list[str]:
     """返回窗口内每个预期日的判定列表（hit/violated/uncertain）。"""
     g = pay[(pay["payee"] == p["key"]["payee"]) & (pay["currency"] == p["key"]["currency"])]
@@ -116,6 +126,16 @@ def run(doc: dict, pay: pd.DataFrame, asof: pd.Timestamp) -> dict:
 
 
 def main():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--asof", default=None)
+    ap.add_argument("--require-fresh", action="store_true",
+                    help="生产硬门：付款数据必须覆盖 asof 附近，否则停止")
+    ap.add_argument("--max-payment-age-days", type=int, default=1,
+                    help="--require-fresh 时允许付款数据最晚距 asof N 天（默认 1）")
+    args = ap.parse_args()
+
     if not PAT.exists():
         raise SystemExit(f"{PAT} 不存在，先跑 patterns.py")
     doc = ps.load(PAT)
@@ -126,7 +146,16 @@ def main():
     con.close()
     if pay.empty:
         raise SystemExit("payments 表为空，先跑 ingest.py")
-    summary = run(doc, pay, pay["date"].max())
+    if args.asof:
+        asof = pd.Timestamp(args.asof)
+    elif args.require_fresh:
+        asof = pd.Timestamp.today().normalize()
+    else:
+        asof = pay["date"].max()
+    if args.require_fresh:
+        require_payment_fresh(pay, asof, args.max_payment_age_days)
+    pay = pay[pay["date"] <= asof]
+    summary = run(doc, pay, asof)
     ps.save(PAT, doc, backup=True)
     print(f"核验 {summary['checked']} 条 → {PAT}")
     for p in summary["violated"]:

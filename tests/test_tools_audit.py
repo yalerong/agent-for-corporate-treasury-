@@ -116,3 +116,19 @@ class TestAuditDecorator:
         my_tool(Weird())
         r = _read_log(audit_log_path)[0]
         assert "<Weird>" in str(r["args"])
+
+    def test_credentials_are_redacted_recursively(self, audit_log_path):
+        @audit()
+        def my_tool(payload: dict, token: str) -> dict:
+            return {"ok": True, "api_key": "result-secret"}
+
+        my_tool(
+            {"password": "payload-secret", "nested": {"authorization": "bearer-secret"}},
+            token="argument-secret",
+        )
+        record = _read_log(audit_log_path)[0]
+        serialized = json.dumps(record, ensure_ascii=False)
+        assert "payload-secret" not in serialized
+        assert "bearer-secret" not in serialized
+        assert "argument-secret" not in serialized
+        assert "result-secret" not in serialized

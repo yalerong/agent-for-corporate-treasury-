@@ -27,12 +27,12 @@ def test_lineage_json(pipeline_root):
         assert ln["patterns_generated_at"]
         assert ln["computed_at"]
         assert set(ln["pattern_ids"]) <= all_ids
-    # 计算口径（0 approved 过渡=high）的血缘应恰为 4 条 high 规律
+    # fixture 已显式批准全部 high；strict 血缘应恰为这些 approved 规律
     high_ids = {p["id"] for p in pats["patterns"] if p["confidence"] == "high"}
     assert set(lineage["fx_advice"]["pattern_ids"]) == high_ids
     assert set(lineage["position"]["pattern_ids"]) == high_ids
     # 无规律参与的指标血缘为空
     assert lineage["budget_variance"]["pattern_ids"] == []
     assert lineage["approvals_profile"]["pattern_ids"] == []
-    # 预测血缘覆盖全部 high（provisional 行仅提示也在预测里，此处只卡下界）
-    assert high_ids <= set(lineage["forecast_4w"]["pattern_ids"])
+    # forecast_4w 正式预测同样只记录参与计算的 approved 行
+    assert set(lineage["forecast_4w"]["pattern_ids"]) == high_ids
