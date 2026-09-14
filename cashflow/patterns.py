@@ -112,6 +112,7 @@ def main():
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "data_range": [str(df["date"].min().date()), str(df["date"].max().date())],
         "rows": len(df),
+        "payments_fingerprint": pattern_store.payments_fingerprint(df),
     }
     # 人工状态(approved/refuted/审计字段)按 pattern_id 从老库继承——自动重算永不改人工状态
     old = pattern_store.load(OUT) if OUT.exists() else None

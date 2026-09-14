@@ -45,7 +45,8 @@ python ui.py                # 本地审批台：报告/规律审批/预测明细
 
 生产巡检请显式启用新鲜度硬门：`python validate.py --require-fresh`、
 `python engine.py --require-fresh`；调拨建议使用
-`advisor.py --require-fresh --balances-asof YYYY-MM-DD --liushui <流水文件>`。
+`advisor.py --require-fresh --balances-asof YYYY-MM-DD --liushui <流水文件>`；若建议单真实走
+USD/MXN 缺口换汇路由，还需显式传 `--fx-usdmxn <rate> --fx-usdmxn-asof YYYY-MM-DD`。
 历史回放不启用该开关，或显式传入回放日 `--asof`。
 
 针对具体系统导出另有专用适配器（用法见各脚本 docstring）：`ingest_liushui.py`（流水查询导出）、`ingest_approvals.py`（审批单导出）、`ingest_budget.py`（预算汇总）、`ingest_history.py`（历史管报日记账合并）；余额双路径——`ingest_balances.py`（finweb 余额总览 Excel 导出；`fetch_finweb.py` 默认落到 `data/raw/balances/`）与 `ingest_balances_api.py`（finweb 接口直取，`FINWEB_BASE_URL`/`FINWEB_TOKEN`）。

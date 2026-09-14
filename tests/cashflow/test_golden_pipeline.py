@@ -45,6 +45,7 @@ def test_pattern_counts(pipeline_root):
     pats = load_patterns(pipeline_root)
     assert pats["meta"]["rows"] == 245
     assert pats["meta"]["data_range"] == ["2026-01-02", "2026-07-30"]
+    assert len(pats["meta"]["payments_fingerprint"]) == 64
     types = [p["type"] for p in pats["patterns"]]
     assert types.count("weekly_level") == 3
     assert types.count("recurring") == 6

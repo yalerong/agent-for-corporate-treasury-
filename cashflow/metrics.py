@@ -71,6 +71,15 @@ def require_patterns_fresh(pats: dict, pay: pd.DataFrame, asof: pd.Timestamp,
     rows = meta.get("rows")
     if rows != len(pay):
         raise SystemExit(f"patterns.yaml rows={rows} 与 asof 内 payments={len(pay)} 不一致，先重跑 patterns.py")
+    expected_fp = meta.get("payments_fingerprint")
+    if not expected_fp:
+        raise SystemExit("patterns.yaml payments_fingerprint 缺失，先重跑 patterns.py")
+    try:
+        actual_fp = ps.payments_fingerprint(pay)
+    except ValueError as exc:
+        raise SystemExit(f"{exc}，先重跑 ingest.py 和 patterns.py") from None
+    if expected_fp != actual_fp:
+        raise SystemExit("patterns.yaml payments_fingerprint 与 payments 内容不一致，先重跑 patterns.py")
 
 
 def require_selected_balance_fresh(selection_asof: pd.Timestamp, freshness_asof: pd.Timestamp,
@@ -368,6 +377,11 @@ def position_metric(ctx, out):
         return None, []
     fc = out["forecast_4w"]["value"]
     calc = calc_rows(fc, ctx["strict"])
+    if calc.empty:
+        value = {"unknown": True, "reason": "no_official_forecast",
+                 "snapshot_date": bal["as_of"].max(), "currency_rows": [],
+                 "events": [], "fx_gap": None}
+        return value, []
     out_cur = calc.groupby("currency")["forecast"].sum()
     bal_cur = bal.groupby("currency")["balance"].sum()
     currency_rows, fx_gap = [], {}
@@ -409,6 +423,9 @@ def fx_advice_metric(ctx, out):
     fc = out["forecast_4w"]["value"]
     calc = calc_rows(fc, ctx["strict"])
     pos = out["position"]["value"]
+    if calc.empty:
+        return {"items": [], "has_balance": pos is not None, "unknown": True,
+                "reason": "no_official_forecast"}, []
     fx_gap = None if pos is None else pos["fx_gap"]
     bud, month = ctx["bud"], ctx["month"]
     items = []

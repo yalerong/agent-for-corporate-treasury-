@@ -19,9 +19,10 @@
   python advisor.py --plan 资金计划表.xlsx --balances 余额总览.xlsx \
       [--week 2026.09.07-2026.09.11] [--liushui 流水查询_原始流水.xlsx] [--paid paid.yaml] \
       [--transfers 调拨申请导出.xlsx|transfers.yaml] [--rules ...] [--map ...] \
-      [--fx-usdmxn 17.5] [--out advice]
+      [--fx-usdmxn 17.5 --fx-usdmxn-asof 2026-09-07] [--out advice]
 """
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -391,6 +392,62 @@ def require_fresh_inputs(week: str, balances_asof: str | pd.Timestamp | None,
                          f"超过 {max_age_days} 天")
 
 
+def needs_usdmxn_fx_route(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict]) -> bool:
+    fx_route = {r["params"]["entity"]: r["params"]["side"] for r in rules_of(rules, "fx_route")}
+    pools = build_fx_pools(bal, rules)
+    independent = {r["params"]["entity"] for r in rules_of(rules, "independent_entity")}
+    paths = {r["params"].get("entity"): r["params"] for r in rules_of(rules, "payment_path")}
+    return any(
+        r["currency"] == "USD"
+        and float(r["gap"]) > AMT_TOL
+        and r["entity"] not in independent
+        and not (
+            r["entity"] in paths
+            and (
+                paths[r["entity"]].get("fallback_usd")
+                or paths[r["entity"]].get("fallback_local_ccy")
+                or paths[r["entity"]].get("path")
+            )
+        )
+        and r["entity"] in fx_route
+        and fx_route[r["entity"]] in pools
+        for _, r in gaps.iterrows()
+    )
+
+
+def resolve_fx_usdmxn(gaps: pd.DataFrame, bal: pd.DataFrame, rules: list[dict],
+                      fx_usdmxn: float | None, fx_usdmxn_asof: str | pd.Timestamp | None,
+                      require_fresh: bool, max_age_days: int = 1,
+                      reference_date: str | pd.Timestamp | None = None) -> float:
+    if fx_usdmxn is not None and (not math.isfinite(fx_usdmxn) or fx_usdmxn <= 0):
+        raise SystemExit("--fx-usdmxn 必须为有限正数")
+    if not require_fresh or not needs_usdmxn_fx_route(gaps, bal, rules):
+        return 17.5 if fx_usdmxn is None else fx_usdmxn
+    if fx_usdmxn is None:
+        raise SystemExit("--require-fresh 且存在 USD/MXN 换汇路由时需要显式 --fx-usdmxn")
+    if fx_usdmxn_asof is None:
+        raise SystemExit("--require-fresh 且存在 USD/MXN 换汇路由时需要 --fx-usdmxn-asof YYYY-MM-DD")
+    reference = (
+        pd.Timestamp(reference_date).normalize()
+        if reference_date is not None
+        else pd.Timestamp.today().normalize()
+    )
+    try:
+        rate_asof = pd.Timestamp(fx_usdmxn_asof)
+    except (ValueError, TypeError):
+        raise SystemExit("--fx-usdmxn-asof 无法解析，请使用 YYYY-MM-DD") from None
+    if pd.isna(rate_asof):
+        raise SystemExit("--fx-usdmxn-asof 无法解析，请使用 YYYY-MM-DD")
+    rate_asof = rate_asof.normalize()
+    age = (reference - rate_asof).days
+    if age < 0:
+        raise SystemExit(f"USD/MXN 汇率 as_of {rate_asof.date()} 晚于核验基准日 {reference.date()}")
+    if age > max_age_days:
+        raise SystemExit(f"USD/MXN 汇率 as_of {rate_asof.date()} 距核验基准日 {reference.date()} 已 {age} 天，"
+                         f"超过 {max_age_days} 天")
+    return fx_usdmxn
+
+
 # ---------- 缺口计算 ----------
 
 def entity_needs(plan: pd.DataFrame, emap: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -649,7 +706,9 @@ def main() -> None:
     ap.add_argument("--transfers", help="在途调拨：transfers.yaml 或 Lark「调拨申请」导出 xlsx（手动/API 版皆可）")
     ap.add_argument("--rules", default=None, help="缺省 CASHFLOW_ROOT/rules/advisor_rules.yaml")
     ap.add_argument("--map", dest="emap", default=None, help="缺省 CASHFLOW_ROOT/rules/advisor_entity_map.yaml")
-    ap.add_argument("--fx-usdmxn", type=float, default=17.5)
+    ap.add_argument("--fx-usdmxn", type=float, default=None)
+    ap.add_argument("--fx-usdmxn-asof",
+                    help="--require-fresh 且真实使用 USD/MXN 路由时声明汇率采集日 YYYY-MM-DD")
     ap.add_argument("--out", default=None)
     ap.add_argument("--require-fresh", action="store_true",
                     help="生产硬门：余额快照、流水和规则 as_of 必须覆盖付款周截止附近")
@@ -704,7 +763,11 @@ def main() -> None:
     needs, blank = entity_needs(plan, emap)
     avail = entity_avail(bal, emap, rules)
     gaps = compute_gaps(needs, avail, transfers)
-    actions, warns = route(gaps, bal, rules, a.fx_usdmxn)
+    fx_usdmxn = resolve_fx_usdmxn(
+        gaps, bal, rules, a.fx_usdmxn, a.fx_usdmxn_asof, a.require_fresh,
+        max_age_days=a.max_input_age_days,
+        reference_date=min(pd.Timestamp.today().normalize(), end.normalize()) if end else None)
+    actions, warns = route(gaps, bal, rules, fx_usdmxn)
     warns += ambig
     if not a.require_fresh:
         warns += stale_rule_data(rules)

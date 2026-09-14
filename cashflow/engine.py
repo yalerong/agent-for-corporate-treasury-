@@ -92,13 +92,16 @@ def build_report(ctx: dict, mets: dict) -> str:
     if pos is not None:
         L.append(f"\n## {sec()}、头寸与调拨建议（余额快照 {pos['snapshot_date']}）"
                  f" <!-- metric: position -->\n")
-        L.append("| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |")
-        L.append("|---|---:|---:|---:|---|")
-        for r in pos["currency_rows"]:
-            status = "⚠️ 缺口" if r["position"] < 0 else "富余"
-            L.append(f"| {r['currency']} | {r['balance']:,.0f} | {r['outflow']:,.0f} | "
-                     f"{r['position']:,.0f} | {status} |")
-        if pos["events"]:
+        if pos.get("unknown"):
+            L.append("正式预测为空，头寸与调拨建议为 unknown；不把空预测当作 0 流出计算富余。")
+        else:
+            L.append("| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |")
+            L.append("|---|---:|---:|---:|---|")
+            for r in pos["currency_rows"]:
+                status = "⚠️ 缺口" if r["position"] < 0 else "富余"
+                L.append(f"| {r['currency']} | {r['balance']:,.0f} | {r['outflow']:,.0f} | "
+                         f"{r['position']:,.0f} | {status} |")
+        if not pos.get("unknown") and pos["events"]:
             L.append("")
             for e in pos["events"]:
                 if e["kind"] == "transfer":
@@ -112,6 +115,8 @@ def build_report(ctx: dict, mets: dict) -> str:
 
     fxv = mets["fx_advice"]["value"]
     L.append(f"\n## {sec()}、外汇交易管控建议 <!-- metric: fx_advice -->\n")
+    if fxv.get("unknown"):
+        L.append("正式预测为空，FX 建议为 unknown；不输出购汇区间或余额覆盖结论。")
     for it in fxv["items"]:
         if it["covered"]:
             L.append(f"- **{it['currency']}**: 未来4周预测流出 {it['outflow']:,.0f}，"

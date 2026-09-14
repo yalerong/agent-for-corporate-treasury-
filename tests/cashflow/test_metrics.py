@@ -4,6 +4,7 @@ import sqlite3
 
 import metrics
 import pandas as pd
+import pattern_store as ps
 import pytest
 import yaml
 
@@ -42,25 +43,29 @@ def test_lineage_json(pipeline_root):
 
 
 def _write_metric_fixture(tmp_dir, meta_end="2026-09-11", meta_rows=2,
-                          balance_asof="2026-09-11"):
+                          balance_asof="2026-09-11", include_fingerprint=True):
     (tmp_dir / "patterns").mkdir()
     (tmp_dir / "data" / "db").mkdir(parents=True)
     pat = tmp_dir / "patterns" / "patterns.yaml"
     db = tmp_dir / "data" / "db" / "treasury.db"
+    pay_rows = pd.DataFrame({"row_hash": ["h1", "h2"]})
+    meta = {"schema_version": 2, "generated_at": "t",
+            "data_range": ["2026-09-01", meta_end], "rows": meta_rows}
+    if include_fingerprint:
+        meta["payments_fingerprint"] = ps.payments_fingerprint(pay_rows)
     pat.write_text(yaml.safe_dump({
-        "meta": {"schema_version": 2, "generated_at": "t",
-                 "data_range": ["2026-09-01", meta_end], "rows": meta_rows},
+        "meta": meta,
         "patterns": [],
     }, allow_unicode=True), encoding="utf-8")
     con = sqlite3.connect(db)
     con.execute(
-        "CREATE TABLE payments(date TEXT, entity TEXT, project TEXT, currency TEXT, payee TEXT, amount REAL)"
+        "CREATE TABLE payments(date TEXT, entity TEXT, project TEXT, currency TEXT, payee TEXT, amount REAL, row_hash TEXT)"
     )
     con.executemany(
-        "INSERT INTO payments VALUES(?,?,?,?,?,?)",
+        "INSERT INTO payments VALUES(?,?,?,?,?,?,?)",
         [
-            ("2026-09-10", "A", "P", "USD", "X", 100.0),
-            ("2026-09-11", "A", "P", "USD", "Y", 100.0),
+            ("2026-09-10", "A", "P", "USD", "X", 100.0, "h1"),
+            ("2026-09-11", "A", "P", "USD", "Y", 100.0, "h2"),
         ],
     )
     con.execute(
@@ -102,6 +107,29 @@ def test_require_fresh_rejects_pattern_row_count_drift(tmp_dir, monkeypatch):
     _patch_metric_paths(monkeypatch, tmp_dir, pat, db)
 
     with pytest.raises(SystemExit, match="patterns.yaml rows"):
+        metrics.build_context("2026-09-11", True, require_fresh=True, max_payment_age_days=1)
+
+
+def test_require_fresh_rejects_missing_pattern_fingerprint(tmp_dir, monkeypatch):
+    pat, db = _write_metric_fixture(tmp_dir, include_fingerprint=False)
+    _patch_metric_paths(monkeypatch, tmp_dir, pat, db)
+
+    with pytest.raises(SystemExit, match="payments_fingerprint"):
+        metrics.build_context("2026-09-11", True, require_fresh=True, max_payment_age_days=1)
+
+
+def test_require_fresh_rejects_pattern_fingerprint_drift(tmp_dir, monkeypatch):
+    pat, db = _write_metric_fixture(tmp_dir)
+    con = sqlite3.connect(db)
+    con.execute(
+        "UPDATE payments SET amount=?, row_hash=? WHERE payee=?",
+        (125.0, "changed", "Y"),
+    )
+    con.commit()
+    con.close()
+    _patch_metric_paths(monkeypatch, tmp_dir, pat, db)
+
+    with pytest.raises(SystemExit, match="payments_fingerprint"):
         metrics.build_context("2026-09-11", True, require_fresh=True, max_payment_age_days=1)
 
 
