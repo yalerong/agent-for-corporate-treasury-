@@ -34,6 +34,27 @@ DB = ROOT / "data" / "db" / "treasury.db"
 PAT = ROOT / "patterns" / "patterns.yaml"
 
 
+def resolve_validation_asof(asof_arg: str | None, pay: pd.DataFrame,
+                            require_fresh: bool,
+                            today: pd.Timestamp | None = None) -> pd.Timestamp:
+    current = (today if today is not None else pd.Timestamp.today()).normalize()
+    try:
+        if asof_arg:
+            asof = pd.Timestamp(asof_arg)
+        elif require_fresh:
+            asof = current
+        else:
+            asof = pay["date"].max()
+    except (ValueError, TypeError):
+        raise SystemExit("--asof 无法解析，请使用 YYYY-MM-DD") from None
+    if pd.isna(asof):
+        raise SystemExit("--asof 无法解析，请使用 YYYY-MM-DD")
+    asof = asof.normalize()
+    if asof > current:
+        raise SystemExit(f"--asof {asof.date()} 晚于当前日期 {current.date()}，拒绝核验未来期间")
+    return asof
+
+
 def require_payment_fresh(pay: pd.DataFrame, asof: pd.Timestamp, max_age_days: int) -> None:
     latest = pay["date"].max()
     if pd.isna(latest):
@@ -146,12 +167,7 @@ def main():
     con.close()
     if pay.empty:
         raise SystemExit("payments 表为空，先跑 ingest.py")
-    if args.asof:
-        asof = pd.Timestamp(args.asof)
-    elif args.require_fresh:
-        asof = pd.Timestamp.today().normalize()
-    else:
-        asof = pay["date"].max()
+    asof = resolve_validation_asof(args.asof, pay, args.require_fresh)
     pay = pay[pay["date"] <= asof]
     if args.require_fresh:
         require_payment_fresh(pay, asof, args.max_payment_age_days)

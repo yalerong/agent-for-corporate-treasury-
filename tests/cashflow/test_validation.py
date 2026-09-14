@@ -124,6 +124,21 @@ def test_require_payment_fresh_fails_when_cutoff_stale():
     validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=2)
 
 
+def test_validation_asof_rejects_future_invalid_and_nat_values():
+    pay = pay_df([("2026-07-29", "A", "P", "USD", "X", 100.0)])
+    today = pd.Timestamp("2026-07-31")
+
+    assert validate.resolve_validation_asof("2026-07-30", pay, False, today) == pd.Timestamp(
+        "2026-07-30"
+    )
+    with pytest.raises(SystemExit, match="拒绝核验未来期间"):
+        validate.resolve_validation_asof("2026-08-01", pay, False, today)
+    with pytest.raises(SystemExit, match="无法解析"):
+        validate.resolve_validation_asof("not-a-date", pay, False, today)
+    with pytest.raises(SystemExit, match="无法解析"):
+        validate.resolve_validation_asof("NaT", pay, False, today)
+
+
 def test_main_filters_asof_before_freshness_gate(tmp_dir, monkeypatch):
     db = tmp_dir / "treasury.db"
     con = sqlite3.connect(db)
