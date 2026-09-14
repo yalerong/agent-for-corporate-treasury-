@@ -500,6 +500,10 @@ def test_require_fresh_rule_data_requires_sensitive_as_of():
     with pytest.raises(SystemExit, match="R-bad"):
         advisor.require_fresh_rule_data([bad], today=pd.Timestamp("2026-09-07"))
 
+    nat = {**valid, "id": "R-nat", "as_of": "NaT"}
+    with pytest.raises(SystemExit, match="R-nat"):
+        advisor.require_fresh_rule_data([nat], today=pd.Timestamp("2026-09-07"))
+
     future = {**valid, "id": "R-future", "as_of": "2026-09-08"}
     with pytest.raises(SystemExit, match="R-future"):
         advisor.require_fresh_rule_data([future], today=pd.Timestamp("2026-09-07"))

@@ -175,6 +175,36 @@ def test_main_filters_asof_before_freshness_gate(tmp_dir, monkeypatch):
         validate.main()
 
 
+def test_explicit_historical_replay_does_not_write_pattern_state(tmp_dir, monkeypatch):
+    db = tmp_dir / "treasury.db"
+    con = sqlite3.connect(db)
+    pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-31"]),
+        "entity": ["A"], "project": ["P"], "currency": ["USD"],
+        "payee": ["X"], "amount": [100.0],
+    }).to_sql("payments", con, index=False)
+    con.close()
+    pat = tmp_dir / "patterns.yaml"
+    original = yaml.safe_dump(
+        {"meta": {"schema_version": 2}, "patterns": []},
+        allow_unicode=True,
+    )
+    pat.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(validate, "DB", db)
+    monkeypatch.setattr(validate, "PAT", pat)
+    monkeypatch.setattr(sys, "argv", ["validate.py", "--asof", "2026-07-31"])
+
+    def mutate_for_replay(doc, _pay, _asof):
+        doc["meta"]["would_have_mutated"] = True
+        return {"checked": 0, "violated": [], "demoted": []}
+
+    monkeypatch.setattr(validate, "run", mutate_for_replay)
+    validate.main()
+
+    assert pat.read_text(encoding="utf-8") == original
+    assert not pat.with_suffix(".yaml.bak").exists()
+
+
 # ---------- 归因两函数 ----------
 
 def test_contrib_manual():

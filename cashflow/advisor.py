@@ -337,10 +337,14 @@ def stale_rule_data(rules: list[dict], max_age_days: int = 21,
                 out.append(f"{r['id']} 内嵌数据缺少 as_of，无法确认是否新鲜")
             continue
         try:
-            age = (today - pd.Timestamp(str(as_of))).days
+            parsed_as_of = pd.Timestamp(str(as_of))
         except (ValueError, TypeError):
             out.append(f"{r['id']} 内嵌数据 as_of={as_of} 无法解析")
             continue
+        if pd.isna(parsed_as_of):
+            out.append(f"{r['id']} 内嵌数据 as_of={as_of} 无法解析")
+            continue
+        age = (today - parsed_as_of).days
         if age < 0:
             out.append(f"{r['id']} 内嵌数据采集日 {as_of} 晚于核验日 {today.date()} (future)")
             continue

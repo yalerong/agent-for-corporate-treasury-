@@ -172,8 +172,12 @@ def main():
     if args.require_fresh:
         require_payment_fresh(pay, asof, args.max_payment_age_days)
     summary = run(doc, pay, asof)
-    ps.save(PAT, doc, backup=True)
-    print(f"核验 {summary['checked']} 条 → {PAT}")
+    historical_replay = args.asof is not None and asof < pd.Timestamp.today().normalize()
+    if historical_replay:
+        print(f"核验 {summary['checked']} 条（历史回放只读，未写 {PAT}）")
+    else:
+        ps.save(PAT, doc, backup=True)
+        print(f"核验 {summary['checked']} 条 → {PAT}")
     for p in summary["violated"]:
         ev = p["evidence"]
         print(f"  [violated] {p['id']} {p['type']} {p['key']} :: "
