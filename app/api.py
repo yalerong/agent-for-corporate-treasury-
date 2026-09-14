@@ -24,7 +24,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from app.auth import role_for_bearer_token
-from app.config import Intent, UserRole, get_settings
+from app.config import Intent, UserRole, get_settings, role_can
 from app.graph import build_graph
 
 app = FastAPI(
@@ -39,7 +39,7 @@ _token_auth = Security(_bearer)
 # 图实例必须在进程内单例：每次 build_graph() 会新建 MemorySaver，
 # 否则 HITL 暂停的 thread 在下次请求里找不到。
 _graph_singleton = None
-_pending_approvals: set[str] = set()
+_pending_approvals: dict[str, Intent] = {}
 
 
 def _graph():
@@ -54,6 +54,17 @@ def _extract_interrupts(out: dict) -> list:
     if not raw:
         return []
     return list(raw) if isinstance(raw, (list, tuple)) else [raw]
+
+
+def _approval_task(payload: Any) -> Intent:
+    task = payload.get("task") if isinstance(payload, dict) else None
+    try:
+        return Intent(task)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail="approval interrupt missing valid task",
+        ) from e
 
 
 def current_user_role(
@@ -125,12 +136,12 @@ def chat(req: ChatRequest, role: UserRole = _current_role) -> ChatResponse:
     if interrupts:
         first = interrupts[0]
         payload = getattr(first, "value", first)
-        _pending_approvals.add(tid)
+        _pending_approvals[tid] = _approval_task(payload)
         return ChatResponse(
             thread_id=tid, status="interrupted", interrupt_payload=payload
         )
 
-    _pending_approvals.discard(tid)
+    _pending_approvals.pop(tid, None)
     if out.get("current_role") == "rejected":
         return ChatResponse(
             thread_id=tid,
@@ -160,9 +171,10 @@ class ApprovalRequest(BaseModel):
 def approve(
     thread_id: str,
     req: ApprovalRequest,
-    _role: UserRole = _approver_role,
+    role: UserRole = _approver_role,
 ) -> ChatResponse:
-    if thread_id not in _pending_approvals:
+    pending_task = _pending_approvals.get(thread_id)
+    if pending_task is None:
         raise HTTPException(status_code=404, detail="thread not found or not waiting for approval")
     instruction_id = req.instruction_id.strip() if req.instruction_id is not None else None
     reason = req.reason.strip() if req.reason is not None else None
@@ -170,6 +182,8 @@ def approve(
         raise HTTPException(status_code=400, detail="approved decision requires instruction_id")
     if not req.approved and not reason:
         raise HTTPException(status_code=400, detail="rejected decision requires reason")
+    if not role_can(role, pending_task):
+        raise HTTPException(status_code=403, detail="insufficient task approval role")
 
     config = {"configurable": {"thread_id": thread_id}}
     payload: dict[str, Any] = {"approved": req.approved}
@@ -186,7 +200,7 @@ def approve(
     status: Literal["completed", "rejected"] = (
         "rejected" if out.get("current_role") == "rejected" else "completed"
     )
-    _pending_approvals.discard(thread_id)
+    _pending_approvals.pop(thread_id, None)
     return ChatResponse(
         thread_id=thread_id,
         status=status,

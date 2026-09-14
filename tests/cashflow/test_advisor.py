@@ -530,6 +530,36 @@ def test_require_fresh_checks_advisor_inputs():
             flows=flows, max_age_days=2, reference_date="2026-09-11")
 
 
+def test_require_fresh_rejects_invalid_nat_and_stale_week_inputs():
+    fresh_flows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-09-14"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+    nat_flows = pd.DataFrame({
+        "date": pd.to_datetime(["NaT"]),
+        "currency": ["USD"],
+        "amount": [1000.0],
+    })
+
+    with pytest.raises(SystemExit, match="balances-asof"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="not-a-date",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="balances-asof"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="NaT",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="require-fresh"):
+        advisor.require_fresh_inputs(
+            "2026.09.14-2026.09.18", balances_asof="2026-09-14",
+            flows=nat_flows, max_age_days=1, reference_date="2026-09-14")
+    with pytest.raises(SystemExit, match="2026.09.07-2026.09.11"):
+        advisor.require_fresh_inputs(
+            "2026.09.07-2026.09.11", balances_asof="2026-09-14",
+            flows=fresh_flows, max_age_days=1, reference_date="2026-09-14")
+
+
 def test_require_fresh_fx_rate_only_when_usdmxn_route_is_used():
     bal = bal_df([("NORTH SA", "pay_NORTH_CW", "MXN", 2e6)])
     mxn_gaps = pd.DataFrame({"entity": ["MX BETA"], "currency": ["MXN"], "need": [100.0],

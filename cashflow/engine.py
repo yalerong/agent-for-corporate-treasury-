@@ -98,6 +98,9 @@ def build_report(ctx: dict, mets: dict) -> str:
             L.append("| 币种 | 余额(最新快照) | 未来4周预测流出 | 头寸 | 状态 |")
             L.append("|---|---:|---:|---:|---|")
             for r in pos["currency_rows"]:
+                if r.get("unknown"):
+                    L.append(f"| {r['currency']} | {r['balance']:,.0f} | unknown | unknown | unknown |")
+                    continue
                 status = "⚠️ 缺口" if r["position"] < 0 else "富余"
                 L.append(f"| {r['currency']} | {r['balance']:,.0f} | {r['outflow']:,.0f} | "
                          f"{r['position']:,.0f} | {status} |")
@@ -117,6 +120,9 @@ def build_report(ctx: dict, mets: dict) -> str:
     L.append(f"\n## {sec()}、外汇交易管控建议 <!-- metric: fx_advice -->\n")
     if fxv.get("unknown"):
         L.append("正式预测为空，FX 建议为 unknown；不输出购汇区间或余额覆盖结论。")
+    elif fxv.get("unknown_currencies"):
+        currencies = "、".join(fxv["unknown_currencies"])
+        L.append(f"- **{currencies}**: 存在未批准预测行，FX 建议为 unknown；不输出覆盖或购汇结论。")
     for it in fxv["items"]:
         if it["covered"]:
             L.append(f"- **{it['currency']}**: 未来4周预测流出 {it['outflow']:,.0f}，"

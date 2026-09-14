@@ -156,13 +156,49 @@ class TestApprovals:
 
         r2 = client.post(
             f"/api/v1/approvals/{tid}",
-            headers=api_headers("supervisor"),
+            headers=api_headers("manager"),
             json={"approved": True, "instruction_id": "APR-2026-API-001"},
         )
         body = r2.json()
         assert r2.status_code == 200
         assert body["status"] == "completed"
         assert "APR-2026-API-001" in body["final_output"]
+
+    def test_supervisor_cannot_approve_fx_and_pending_remains(
+        self, client, api_headers, fake_llm, populated_stores
+    ):
+        fake_llm(["fx"])
+        start = client.post(
+            "/api/v1/chat",
+            headers=api_headers("manager"),
+            json={"message": "hedge USD"},
+        )
+        tid = start.json()["thread_id"]
+        assert api_module._pending_approvals[tid] == api_module.Intent.FX
+
+        denied = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("supervisor"),
+            json={"approved": True, "instruction_id": "APR-2026-API-003"},
+        )
+        assert denied.status_code == 403
+        assert api_module._pending_approvals[tid] == api_module.Intent.FX
+
+        denied_rejection = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("supervisor"),
+            json={"approved": False, "reason": "not my authority"},
+        )
+        assert denied_rejection.status_code == 403
+        assert api_module._pending_approvals[tid] == api_module.Intent.FX
+
+        approved = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("manager"),
+            json={"approved": True, "instruction_id": "APR-2026-API-003"},
+        )
+        assert approved.status_code == 200
+        assert tid not in api_module._pending_approvals
 
     def test_reject_resume(self, client, api_headers, fake_llm, populated_stores):
         fake_llm(["fx"])

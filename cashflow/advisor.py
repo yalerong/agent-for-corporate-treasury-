@@ -366,15 +366,21 @@ def require_fresh_inputs(week: str, balances_asof: str | pd.Timestamp | None,
                          reference_date: str | pd.Timestamp | None = None) -> None:
     _, week_end_s = week.split("-")
     week_end = pd.Timestamp(week_end_s.replace(".", "-"))
-    reference = min(
-        pd.Timestamp(reference_date).normalize() if reference_date else pd.Timestamp.today().normalize(),
-        week_end.normalize(),
-    )
+    reference = pd.Timestamp(reference_date).normalize() if reference_date else pd.Timestamp.today().normalize()
     if max_age_days < 0:
         raise SystemExit("--max-input-age-days 不能为负数")
+    week_age = (reference - week_end.normalize()).days
+    if week_age > max_age_days:
+        raise SystemExit(f"付款周 {week} 截止 {week_end.date()} 距核验基准日 {reference.date()} 已 {week_age} 天，"
+                         f"超过 {max_age_days} 天")
     if balances_asof is None:
         raise SystemExit("--require-fresh 需要 --balances-asof YYYY-MM-DD")
-    bal_asof = pd.Timestamp(balances_asof)
+    try:
+        bal_asof = pd.Timestamp(balances_asof)
+    except (ValueError, TypeError):
+        raise SystemExit("--balances-asof 无法解析，请使用 YYYY-MM-DD") from None
+    if pd.isna(bal_asof):
+        raise SystemExit("--balances-asof 无法解析，请使用 YYYY-MM-DD")
     age = (reference - bal_asof.normalize()).days
     if age < 0:
         raise SystemExit(f"余额快照 {bal_asof.date()} 晚于核验基准日 {reference.date()}")
@@ -384,6 +390,8 @@ def require_fresh_inputs(week: str, balances_asof: str | pd.Timestamp | None,
     if flows is None or flows.empty:
         raise SystemExit("--require-fresh 需要 --liushui，且流水不能为空")
     latest_flow = flows["date"].max()
+    if pd.isna(latest_flow):
+        raise SystemExit("--require-fresh 需要 --liushui，且流水日期不能为空")
     flow_age = (reference - latest_flow.normalize()).days
     if flow_age < 0:
         raise SystemExit(f"流水截止 {latest_flow.date()} 晚于核验基准日 {reference.date()}")
@@ -765,8 +773,7 @@ def main() -> None:
     gaps = compute_gaps(needs, avail, transfers)
     fx_usdmxn = resolve_fx_usdmxn(
         gaps, bal, rules, a.fx_usdmxn, a.fx_usdmxn_asof, a.require_fresh,
-        max_age_days=a.max_input_age_days,
-        reference_date=min(pd.Timestamp.today().normalize(), end.normalize()) if end else None)
+        max_age_days=a.max_input_age_days)
     actions, warns = route(gaps, bal, rules, fx_usdmxn)
     warns += ambig
     if not a.require_fresh:

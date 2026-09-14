@@ -31,10 +31,21 @@ def test_lineage_json(pipeline_root):
         assert ln["patterns_generated_at"]
         assert ln["computed_at"]
         assert set(ln["pattern_ids"]) <= all_ids
-    # fixture 已显式批准全部 high；strict 血缘应恰为这些 approved 规律
+    # fixture 已显式批准全部 high；但仍有候选行覆盖的币种不能进入头寸/FX 血缘
     high_ids = {p["id"] for p in pats["patterns"] if p["confidence"] == "high"}
-    assert set(lineage["fx_advice"]["pattern_ids"]) == high_ids
-    assert set(lineage["position"]["pattern_ids"]) == high_ids
+    unknown_currencies = {
+        p["key"].get("currency")
+        for p in pats["patterns"]
+        if p["type"] in {"weekly_level", "recurring"} and ps.status_of(p) != "approved"
+    }
+    known_high_ids = {
+        p["id"] for p in pats["patterns"]
+        if p["type"] in {"weekly_level", "recurring"}
+        and p["confidence"] == "high"
+        and p["key"].get("currency") not in unknown_currencies
+    }
+    assert set(lineage["fx_advice"]["pattern_ids"]) == known_high_ids
+    assert set(lineage["position"]["pattern_ids"]) == known_high_ids
     # 无规律参与的指标血缘为空
     assert lineage["budget_variance"]["pattern_ids"] == []
     assert lineage["approvals_profile"]["pattern_ids"] == []
@@ -184,3 +195,70 @@ def test_require_fresh_accepts_current_decision_inputs(tmp_dir, monkeypatch):
 
     ctx = metrics.build_context("2026-09-11", True, require_fresh=True, max_payment_age_days=1)
     assert ctx["asof"] == pd.Timestamp("2026-09-11")
+
+
+def test_candidate_currency_stays_unknown_for_position_and_fx(monkeypatch):
+    official = pd.DataFrame(
+        [
+            {
+                "entity": "SG Co", "project": "Ops", "currency": "CNY", "payee": "",
+                "week": "W+1", "start": "2026-08-01", "forecast": 151880.0,
+                "source": "weekly_level", "confidence": "high", "status": "approved",
+                "pattern_id": "approved-cny", "note": "",
+            },
+            {
+                "entity": "US Co", "project": "Ops", "currency": "USD", "payee": "",
+                "week": "W+1", "start": "2026-08-01", "forecast": 100.0,
+                "source": "weekly_level", "confidence": "high", "status": "approved",
+                "pattern_id": "approved-usd", "note": "",
+            },
+        ],
+        columns=metrics.FORECAST_COLUMNS,
+    )
+    official.attrs["candidates"] = pd.DataFrame(
+        [
+            {
+                "entity": "US Co", "project": "Ops", "currency": "USD", "payee": "",
+                "week": "W+2", "start": "2026-08-08", "forecast": 50000.0,
+                "source": "weekly_level", "confidence": "high", "status": "candidate",
+                "pattern_id": "candidate-usd", "note": "",
+            },
+        ],
+        columns=metrics.FORECAST_COLUMNS,
+    )
+    balances = pd.DataFrame(
+        [
+            {"entity": "SG Co", "bank": "B", "account": "1", "currency": "CNY",
+             "as_of": "2026-07-30", "balance": 60000.0},
+            {"entity": "HK Co", "bank": "B", "account": "2", "currency": "CNY",
+             "as_of": "2026-07-30", "balance": 80000.0},
+            {"entity": "US Co", "bank": "B", "account": "3", "currency": "USD",
+             "as_of": "2026-07-30", "balance": 100000.0},
+        ]
+    )
+    monkeypatch.setattr(metrics, "load_balances", lambda _asof: balances)
+    ctx = {
+        "asof": pd.Timestamp("2026-07-30"), "strict": True,
+        "pay": pd.DataFrame(columns=["payee", "entity", "amount"]),
+        "bud": None, "month": "2026-07",
+    }
+    out = {"forecast_4w": {"value": official}}
+
+    position, position_ids = metrics.position_metric(ctx, out)
+    out["position"] = {"value": position}
+    fx, fx_ids = metrics.fx_advice_metric(ctx, out)
+
+    rows = {row["currency"]: row for row in position["currency_rows"]}
+    assert rows["USD"]["unknown"] is True
+    assert rows["USD"]["outflow"] is None
+    assert rows["CNY"]["position"] == -11880.0
+    assert position["events"] == [
+        {"kind": "transfer", "donor": "HK Co", "recipient": "SG Co", "currency": "CNY",
+         "amount": 80000.0, "need_before": 91880.0, "donor_avail_before": 80000.0},
+        {"kind": "residual", "entity": "SG Co", "currency": "CNY", "amount": 11880.0},
+    ]
+    assert {item["currency"] for item in fx["items"]} == {"CNY"}
+    assert position["unknown_currencies"] == ["USD"]
+    assert fx["unknown_currencies"] == ["USD"]
+    assert position_ids == ["approved-cny"]
+    assert fx_ids == ["approved-cny"]

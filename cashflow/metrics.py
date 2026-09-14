@@ -182,6 +182,14 @@ def calc_rows(fc: pd.DataFrame, strict: bool) -> pd.DataFrame:
     return fc[fc["status"] == "approved"] if strict else fc[fc["confidence"] == "high"]
 
 
+def unknown_forecast_currencies(fc: pd.DataFrame) -> set[str]:
+    candidates = fc.attrs.get("candidates")
+    if (not isinstance(candidates, pd.DataFrame) or candidates.empty
+            or "currency" not in candidates.columns):
+        return set()
+    return set(candidates["currency"].dropna().astype(str))
+
+
 # ---------- 预算 ----------
 
 def comparable_actuals(act: pd.DataFrame, agg_mode: bool) -> pd.DataFrame:
@@ -380,18 +388,27 @@ def position_metric(ctx, out):
     if calc.empty:
         value = {"unknown": True, "reason": "no_official_forecast",
                  "snapshot_date": bal["as_of"].max(), "currency_rows": [],
-                 "events": [], "fx_gap": None}
+                 "events": [], "fx_gap": None,
+                 "unknown_currencies": sorted(unknown_forecast_currencies(fc))}
         return value, []
-    out_cur = calc.groupby("currency")["forecast"].sum()
+    unknown_currencies = unknown_forecast_currencies(fc)
+    known_calc = calc[~calc["currency"].isin(unknown_currencies)]
+    out_cur = known_calc.groupby("currency")["forecast"].sum()
     bal_cur = bal.groupby("currency")["balance"].sum()
     currency_rows, fx_gap = [], {}
-    for cur in sorted(set(bal_cur.index) | set(out_cur.index)):
-        b, o = float(bal_cur.get(cur, 0.0)), float(out_cur.get(cur, 0.0))
+    for cur in sorted(set(bal_cur.index) | set(out_cur.index) | unknown_currencies):
+        b = float(bal_cur.get(cur, 0.0))
+        if cur in unknown_currencies:
+            currency_rows.append({"currency": cur, "balance": b, "outflow": None,
+                                  "position": None, "unknown": True})
+            continue
+        o = float(out_cur.get(cur, 0.0))
         fx_gap[cur] = max(0.0, o - b)
         currency_rows.append({"currency": cur, "balance": b, "outflow": o, "position": b - o})
 
-    out_ent = split_outflow_by_entity(calc, pay=ctx["pay"])
-    bal_ent = bal.groupby(["entity", "currency"])["balance"].sum()
+    out_ent = split_outflow_by_entity(known_calc, pay=ctx["pay"])
+    known_bal = bal[~bal["currency"].isin(unknown_currencies)]
+    bal_ent = known_bal.groupby(["entity", "currency"])["balance"].sum()
     ent_pos = bal_ent.sub(out_ent, fill_value=0.0)
     avail = {k: float(v) for k, v in ent_pos[ent_pos > 0].items()}
     events = []
@@ -411,8 +428,9 @@ def position_metric(ctx, out):
         if need > 0:
             events.append({"kind": "residual", "entity": ent, "currency": cur, "amount": need})
     value = {"snapshot_date": bal["as_of"].max(), "currency_rows": currency_rows,
-             "events": events, "fx_gap": fx_gap}
-    return value, ([] if calc.empty else list(calc["pattern_id"]))
+             "events": events, "fx_gap": fx_gap,
+             "unknown_currencies": sorted(unknown_currencies)}
+    return value, ([] if known_calc.empty else list(known_calc["pattern_id"]))
 
 
 # ---------- 外汇 ----------
@@ -423,13 +441,18 @@ def fx_advice_metric(ctx, out):
     fc = out["forecast_4w"]["value"]
     calc = calc_rows(fc, ctx["strict"])
     pos = out["position"]["value"]
+    unknown_currencies = unknown_forecast_currencies(fc)
+    if pos is not None:
+        unknown_currencies |= set(pos.get("unknown_currencies", []))
+    known_calc = calc[~calc["currency"].isin(unknown_currencies)]
     if calc.empty:
         return {"items": [], "has_balance": pos is not None, "unknown": True,
-                "reason": "no_official_forecast"}, []
+                "reason": "no_official_forecast",
+                "unknown_currencies": sorted(unknown_forecast_currencies(fc))}, []
     fx_gap = None if pos is None else pos["fx_gap"]
     bud, month = ctx["bud"], ctx["month"]
     items = []
-    for cur, outflow in calc.groupby("currency")["forecast"].sum().items():
+    for cur, outflow in known_calc.groupby("currency")["forecast"].sum().items():
         need = float(outflow) if fx_gap is None else fx_gap.get(cur, 0.0)
         if fx_gap is not None and need <= 0:
             items.append({"currency": cur, "outflow": float(outflow), "covered": True,
@@ -440,8 +463,9 @@ def fx_advice_metric(ctx, out):
             cap = bud[(bud["month"] == month) & (bud["currency"] == cur)]["budget"].sum()
         items.append({"currency": cur, "outflow": float(outflow), "covered": False,
                       "need": float(need), "cap": float(cap) if cap else None})
-    return {"items": items, "has_balance": fx_gap is not None}, \
-        ([] if calc.empty else list(calc["pattern_id"]))
+    return {"items": items, "has_balance": fx_gap is not None,
+            "unknown_currencies": sorted(unknown_currencies)}, \
+        ([] if known_calc.empty else list(known_calc["pattern_id"]))
 
 
 # ---------- 关联方 ----------
