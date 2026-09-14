@@ -41,7 +41,8 @@ from advisor_inputs import (
 from constants import get_root
 
 AMT_TOL = 0.01  # paid 按金额匹配时的容差
-# 自动核销只看"对外出款"类流水；内部划转/提现/放款等不参与核销但保留给在途单判定与账户质检。
+FRESHNESS_RULE_TYPES = {"weekly_inflow", "usdt_wealth_unlocked"}
+# 自动核销只看“对外出款”类流水；内部划转/提现/放款等不参与核销但保留给在途单判定与账户质检。
 # 2026-08-24 挑错：「本金出款」（基金退出）不在名单里漏看 36.5 万；2026-08-31 加「基金」。
 PAY_CLASS_PREFIX = ("账单出款", "税费出款", "工资薪酬", "注资款出款", "员工报销/福利",
                     "房租物业水电出款", "利息出款", "本金出款", "基金")
@@ -328,12 +329,19 @@ def stale_rule_data(rules: list[dict], max_age_days: int = 21,
     today = today or pd.Timestamp.today().normalize()
     out = []
     for r in rules:
+        requires_as_of = r.get("type") in FRESHNESS_RULE_TYPES
         as_of = r.get("as_of") or (r.get("params") or {}).get("as_of")
         if not as_of:
+            if requires_as_of:
+                out.append(f"{r['id']} 内嵌数据缺少 as_of，无法确认是否新鲜")
             continue
         try:
             age = (today - pd.Timestamp(str(as_of))).days
         except (ValueError, TypeError):
+            out.append(f"{r['id']} 内嵌数据 as_of={as_of} 无法解析")
+            continue
+        if age < 0:
+            out.append(f"{r['id']} 内嵌数据采集日 {as_of} 晚于核验日 {today.date()} (future)")
             continue
         if age > max_age_days:
             out.append(f"{r['id']} 内嵌数据采集于 {as_of}（{age} 天前），超过 {max_age_days} 天——用前重核")

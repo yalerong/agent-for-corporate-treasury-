@@ -164,17 +164,19 @@ def approve(
 ) -> ChatResponse:
     if thread_id not in _pending_approvals:
         raise HTTPException(status_code=404, detail="thread not found or not waiting for approval")
-    if req.approved and not req.instruction_id:
+    instruction_id = req.instruction_id.strip() if req.instruction_id is not None else None
+    reason = req.reason.strip() if req.reason is not None else None
+    if req.approved and not instruction_id:
         raise HTTPException(status_code=400, detail="approved decision requires instruction_id")
-    if not req.approved and not req.reason:
+    if not req.approved and not reason:
         raise HTTPException(status_code=400, detail="rejected decision requires reason")
 
     config = {"configurable": {"thread_id": thread_id}}
     payload: dict[str, Any] = {"approved": req.approved}
-    if req.instruction_id:
-        payload["instruction_id"] = req.instruction_id
-    if req.reason:
-        payload["reason"] = req.reason
+    if instruction_id:
+        payload["instruction_id"] = instruction_id
+    if reason:
+        payload["reason"] = reason
 
     try:
         out = _graph().invoke(Command(resume=payload), config=config)

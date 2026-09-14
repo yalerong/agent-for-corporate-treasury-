@@ -229,6 +229,52 @@ class TestApprovals:
         )
         assert rejected.status_code == 400
 
+    def test_approval_rejects_whitespace_only_decision_details(
+        self, client, api_headers, fake_llm, populated_stores
+    ):
+        fake_llm(["fx"])
+        start = client.post(
+            "/api/v1/chat",
+            headers=api_headers("manager"),
+            json={"message": "hedge"},
+        )
+        tid = start.json()["thread_id"]
+
+        approved = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("manager"),
+            json={"approved": True, "instruction_id": "   "},
+        )
+        assert approved.status_code == 400
+
+        rejected = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("manager"),
+            json={"approved": False, "reason": "\t  "},
+        )
+        assert rejected.status_code == 400
+
+    def test_approval_strips_decision_details_before_resume(
+        self, client, api_headers, fake_llm, populated_stores
+    ):
+        fake_llm(["fx"])
+        start = client.post(
+            "/api/v1/chat",
+            headers=api_headers("manager"),
+            json={"message": "hedge"},
+        )
+        tid = start.json()["thread_id"]
+
+        approved = client.post(
+            f"/api/v1/approvals/{tid}",
+            headers=api_headers("manager"),
+            json={"approved": True, "instruction_id": "  APR-2026-API-002  "},
+        )
+        body = approved.json()
+        assert approved.status_code == 200
+        assert "APR-2026-API-002" in body["final_output"]
+        assert "  APR-2026-API-002  " not in body["final_output"]
+
 
 class TestKnowledgeEndpoint:
     def test_query_both_tracks(self, client, api_headers, populated_stores):

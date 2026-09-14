@@ -52,6 +52,65 @@ def require_payment_fresh(pay: pd.DataFrame, asof: pd.Timestamp, max_age_days: i
                          f"超过 {max_age_days} 天")
 
 
+def require_patterns_fresh(pats: dict, pay: pd.DataFrame, asof: pd.Timestamp,
+                           max_age_days: int) -> None:
+    meta = pats.get("meta") or {}
+    try:
+        pattern_end = pd.Timestamp(str((meta.get("data_range") or [None, None])[1]))
+    except (ValueError, TypeError):
+        raise SystemExit("patterns.yaml data_range 无法解析，先重跑 patterns.py") from None
+    if pd.isna(pattern_end):
+        raise SystemExit("patterns.yaml data_range 无法解析，先重跑 patterns.py")
+    pattern_end = pattern_end.normalize()
+    lag = (asof.normalize() - pattern_end).days
+    if lag < 0:
+        raise SystemExit(f"patterns.yaml data_range 截止 {pattern_end.date()} 晚于 asof {asof.date()}")
+    if lag > max_age_days:
+        raise SystemExit(f"patterns.yaml data_range 截止 {pattern_end.date()}，距 asof {asof.date()} 已 {lag} 天，"
+                         f"超过 {max_age_days} 天，先重跑 patterns.py")
+    rows = meta.get("rows")
+    if rows != len(pay):
+        raise SystemExit(f"patterns.yaml rows={rows} 与 asof 内 payments={len(pay)} 不一致，先重跑 patterns.py")
+
+
+def require_selected_balance_fresh(selection_asof: pd.Timestamp, freshness_asof: pd.Timestamp,
+                                   max_age_days: int) -> None:
+    con = sqlite3.connect(DB)
+    try:
+        bal = pd.read_sql("SELECT * FROM balances WHERE as_of<=?", con,
+                          params=(selection_asof.strftime("%Y-%m-%d"),))
+    except Exception:
+        raise SystemExit("balance snapshot 不存在，先跑 ingest_balances.py") from None
+    finally:
+        con.close()
+    if bal.empty:
+        raise SystemExit(
+            f"balance snapshot 在报告截止 {selection_asof.date()} 前为空，先跑 ingest_balances.py"
+        )
+    balance_dates = pd.to_datetime(bal["as_of"], errors="coerce")
+    if balance_dates.isna().any():
+        raise SystemExit("balance snapshot 含非法 as_of，先重新入库")
+    bal = bal.assign(_as_of=balance_dates)
+    key = ["entity", "bank", "account", "currency"]
+    bal[["bank", "account"]] = bal[["bank", "account"]].fillna("")
+    selected_dates = bal.groupby(key)["_as_of"].max()
+    lags = (freshness_asof.normalize() - selected_dates.dt.normalize()).dt.days
+    future = selected_dates[lags < 0]
+    if not future.empty:
+        raise SystemExit(
+            f"balance snapshot {future.max().date()} 晚于 asof {freshness_asof.date()}"
+        )
+    stale = selected_dates[lags > max_age_days]
+    if not stale.empty:
+        oldest = stale.min()
+        max_lag = int(lags.loc[stale.index].max())
+        raise SystemExit(
+            f"balance snapshot 有 {len(stale)} 个账户截止最早为 {oldest.date()}，"
+            f"距 asof {freshness_asof.date()} 最长 {max_lag} 天，超过 {max_age_days} 天，"
+            "先跑 ingest_balances.py"
+        )
+
+
 def build_context(asof_arg: str | None, strict_flag: bool,
                   require_fresh: bool = False, max_payment_age_days: int = 1) -> dict:
     """加载全部输入并定门控。asof 缺省=规律库数据末日；strict 不自动回退。"""
@@ -83,6 +142,8 @@ def build_context(asof_arg: str | None, strict_flag: bool,
     asof = pay["date"].max()
     if require_fresh:
         require_payment_fresh(pay, seed, max_payment_age_days)
+        require_patterns_fresh(pats, pay, seed, max_payment_age_days)
+        require_selected_balance_fresh(asof, seed, max_payment_age_days)
     strict = strict_flag
     approved_count = sum(1 for p in pats["patterns"] if ps.status_of(p) == "approved")
     return {"pay": pay, "pats": pats, "bud": bud, "rp": rp, "asof": asof,

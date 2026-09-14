@@ -1,4 +1,7 @@
 """PR4 核验+归因：三态判定、降级状态机（永不自动 refuted）、贡献分解手算、日历对齐。"""
+import sqlite3
+import sys
+
 import attribution
 import pandas as pd
 import pattern_store as ps
@@ -119,6 +122,42 @@ def test_require_payment_fresh_fails_when_cutoff_stale():
         validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=1)
 
     validate.require_payment_fresh(pay, pd.Timestamp("2026-07-31"), max_age_days=2)
+
+
+def test_main_filters_asof_before_freshness_gate(tmp_dir, monkeypatch):
+    db = tmp_dir / "treasury.db"
+    con = sqlite3.connect(db)
+    pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-01", "2026-08-15"]),
+        "entity": ["A", "A"],
+        "project": ["P", "P"],
+        "currency": ["USD", "USD"],
+        "payee": ["X", "X"],
+        "amount": [100.0, 100.0],
+    }).to_sql("payments", con, index=False)
+    con.close()
+    pat = tmp_dir / "patterns.yaml"
+    pat.write_text(
+        yaml.safe_dump({"meta": {"schema_version": 2}, "patterns": []}, allow_unicode=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(validate, "DB", db)
+    monkeypatch.setattr(validate, "PAT", pat)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate.py",
+            "--require-fresh",
+            "--asof",
+            "2026-07-31",
+            "--max-payment-age-days",
+            "1",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="付款数据截止 2026-07-01"):
+        validate.main()
 
 
 # ---------- 归因两函数 ----------

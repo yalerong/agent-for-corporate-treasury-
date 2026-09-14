@@ -152,9 +152,9 @@ def main():
         asof = pd.Timestamp.today().normalize()
     else:
         asof = pay["date"].max()
+    pay = pay[pay["date"] <= asof]
     if args.require_fresh:
         require_payment_fresh(pay, asof, args.max_payment_age_days)
-    pay = pay[pay["date"] <= asof]
     summary = run(doc, pay, asof)
     ps.save(PAT, doc, backup=True)
     print(f"核验 {summary['checked']} 条 → {PAT}")

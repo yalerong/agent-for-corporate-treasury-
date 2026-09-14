@@ -486,6 +486,25 @@ def test_stale_rule_data():
     assert len(out) == 1 and out[0].startswith("R-009") and "26 天前" in out[0]
 
 
+def test_require_fresh_rule_data_requires_sensitive_as_of():
+    valid = {"id": "R-ok", "type": "weekly_inflow", "status": "approved",
+             "as_of": "2026-09-07", "params": {"currency": "USDT", "low": 1, "high": 2}}
+    advisor.require_fresh_rule_data([valid], today=pd.Timestamp("2026-09-07"))
+
+    missing = {**valid, "id": "R-missing"}
+    missing.pop("as_of")
+    with pytest.raises(SystemExit, match="R-missing"):
+        advisor.require_fresh_rule_data([missing], today=pd.Timestamp("2026-09-07"))
+
+    bad = {**valid, "id": "R-bad", "as_of": "not-a-date"}
+    with pytest.raises(SystemExit, match="R-bad"):
+        advisor.require_fresh_rule_data([bad], today=pd.Timestamp("2026-09-07"))
+
+    future = {**valid, "id": "R-future", "as_of": "2026-09-08"}
+    with pytest.raises(SystemExit, match="R-future"):
+        advisor.require_fresh_rule_data([future], today=pd.Timestamp("2026-09-07"))
+
+
 def test_require_fresh_checks_advisor_inputs():
     flows = pd.DataFrame({
         "date": pd.to_datetime(["2026-09-09"]),
