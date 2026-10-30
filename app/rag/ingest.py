@@ -313,6 +313,10 @@ def _migrate_source_prefix(
         entry = manifest.docs.pop(source)
         entry["sha256"] = ""
         entry["migrated_from"] = source  # 重建成功后按旧名字清理块
+        if entry.get("meta", {}).get("doc_id") == source:
+            # 没显式写 doc_id 的文档，id 原本就是旧 source；改名后若按新 source 重新推导，
+            # 别的文档 supersedes: [旧 source] 的引用就断了，被取代的旧制度会重新可检索
+            entry["pinned_doc_id"] = True
         manifest.docs[new_source] = entry
         moved += 1
     if moved:
@@ -345,7 +349,9 @@ def _upgrade_legacy_entries(
             manifest.save()
 
 
-def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
+def _load(
+    root: Path, path: Path, source: str, default_doc_id: str | None = None
+) -> tuple[DocMeta, str]:
     """解析正文 + 元数据。文本类格式的 front matter 在这里拆掉，不进索引。"""
     text = parse_file(path)
     front = None
@@ -353,7 +359,7 @@ def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
         front, text = split_front_matter(text)
         if not text.strip():
             raise ParseError("去掉 front matter 后正文为空")
-    return resolve_meta(root, path, source, front), text
+    return resolve_meta(root, path, source, front, default_doc_id), text
 
 
 def _refresh_superseded(store, manifest: Manifest, report: SyncReport, dry_run: bool) -> None:
@@ -422,8 +428,8 @@ def sync_directory(
         manifest.collection = store.collection_name
 
     on_disk = scan_root(root, source_prefix, errors=report.scan_errors)
-    _migrate_source_prefix(manifest, on_disk, source_prefix, report, dry_run)
     _upgrade_legacy_entries(manifest, report, dry_run)
+    _migrate_source_prefix(manifest, on_disk, source_prefix, report, dry_run)
     # 目录读不全时，"文件没了" 可能只是看不见：宁可不对账，也绝不删错
     vanished = [] if report.scan_errors else sorted(set(manifest.docs) - set(on_disk))
     if (
@@ -468,7 +474,8 @@ def sync_directory(
             report.unchanged.append(source)
             continue
         try:
-            meta, text = _load(root, path, source)
+            pinned = bool(old and old.get("pinned_doc_id"))
+            meta, text = _load(root, path, source, old["meta"]["doc_id"] if pinned else None)
             owner = claimed.get(meta.doc_id)
             if owner is not None and owner != source:
                 raise MetaError(f"doc_id {meta.doc_id!r} 已被 {owner} 使用")
@@ -514,6 +521,7 @@ def sync_directory(
         manifest.docs[source] = {
             "sha256": digest, "chunk_ids": ids, "indexed_at": now,
             "meta": meta.to_dict(), "superseded_on": NEVER,
+            **({"pinned_doc_id": True} if pinned else {}),
         }
         manifest.save()
 
@@ -522,6 +530,7 @@ def sync_directory(
         if dry_run:
             continue
         _delete_source(store, source)
+        _cleanup_migrated(store, manifest.docs[source])  # 迁移后一直没重建成功就被删：旧名字下的块也要清
         del manifest.docs[source]
         manifest.save()
 
