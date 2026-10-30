@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 
+    # 文档生效期 / 取代日按这个时区的“今天”判断（容器默认 UTC，不设的话北京时间 0–8 点会差一天）
+    kb_timezone: str = "Asia/Shanghai"
+
     embedding_model: str = "BAAI/bge-large-zh-v1.5"
     embedding_device: Literal["cpu", "cuda"] = "cpu"
 

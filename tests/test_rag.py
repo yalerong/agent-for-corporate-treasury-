@@ -60,7 +60,7 @@ def in_memory_client() -> QdrantClient:
 
 class TestLoadDirectory:
     def test_loads_md_files(self, project_root):
-        docs = load_directory(project_root / "knowledge_base" / "industry", category="industry")
+        docs = load_directory(project_root / "examples" / "kb" / "industry", category="industry")
         assert len(docs) >= 2, "industry/ 应至少有 2 个 stub 文档"
         assert all(d.metadata["category"] == "industry" for d in docs)
         assert all("industry" in d.metadata["source"] for d in docs)
@@ -77,7 +77,7 @@ class TestLoadDirectory:
         assert load_directory(tmp_dir / "does_not_exist", category="test") == []
 
     def test_subcategory_from_parent_dir(self, project_root):
-        docs = load_directory(project_root / "knowledge_base" / "industry", category="industry")
+        docs = load_directory(project_root / "examples" / "kb" / "industry", category="industry")
         assert {d.metadata["subcategory"] for d in docs} == {"regulations"}
 
 
@@ -138,7 +138,7 @@ class TestDualTrackRetrieval:
         mdir = Path(tempfile.mkdtemp(prefix="treasury_manifest_"))
         for track, store in (("industry", industry_store), ("enterprise", enterprise_store)):
             report = sync_directory(
-                project_root / "knowledge_base" / track, track, store,
+                project_root / "examples" / "kb" / track, track, store,
                 Manifest(mdir / f"{track}.json"), source_prefix=f"{track}/",
             )
             assert report.added and not report.errors

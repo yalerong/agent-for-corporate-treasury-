@@ -19,6 +19,7 @@ from langgraph.types import interrupt
 import app.llm as llm_module
 from app.config import Intent, Thresholds
 from app.graph.state import TreasuryState
+from app.rag.answer import NO_RESULTS, REFUSAL_MESSAGE, build_prompt
 from app.tools.knowledge import search_enterprise_knowledge, search_industry_knowledge
 
 VALID_INTENTS = [i.value for i in Intent]
@@ -147,23 +148,22 @@ def knowledge_node(state: TreasuryState) -> dict:
     industry_context = search_industry_knowledge.invoke({"query": query, "k": 3})
     enterprise_context = search_enterprise_knowledge.invoke({"query": query, "k": 3})
 
-    prompt = f"""你是企业资金合规专家。根据下面两类参考资料回答用户问题。
+    if industry_context == NO_RESULTS and enterprise_context == NO_RESULTS:
+        # 两个库都没有现行有效的命中：不去问模型（它没有资料可依，只会编）
+        msg = AIMessage(content=f"[知识库] {REFUSAL_MESSAGE}")
+        return {
+            "current_role": "knowledge",
+            "messages": [msg],
+            "final_output": msg.content,
+            "industry_context": industry_context,
+            "enterprise_context": enterprise_context,
+        }
 
-【行业法规参考】
-{industry_context}
-
-【企业内部制度参考】
-{enterprise_context}
-
-【用户问题】
-{query}
-
-要求：
-1. 综合两类资料给出回答
-2. 每条结论后用 [来源: source 路径] 标注出处
-3. 如行业法规与企业制度冲突，以法规为准并明确指出冲突
-4. 不要编造未在参考资料中出现的条款
-"""
+    # 提示词与引用格式和命令行 ask / 评测回答层共用同一份（app/rag/answer.py）
+    prompt = build_prompt(
+        query,
+        [("行业法规参考", industry_context), ("企业内部制度参考", enterprise_context)],
+    )
     llm = llm_module.get_chat_model()
     response = llm.invoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)

@@ -225,8 +225,111 @@ class TestSyncWithMeta:
         _sync(root, store, tmp_dir)
         assert _payloads(store)["old.md"]["superseded_on"] == 20261001  # 旧文档本身没重写
         new.unlink()
-        _sync(root, store, tmp_dir, force=True)
-        assert _payloads(store)["old.md"]["superseded_on"] == NEVER  # 取代者没了，恢复现行
+        r, _ = _sync(root, store, tmp_dir, force=True)
+        # 取代者被删不等于旧制度恢复生效：台账保留取代关系，并提示怎么恢复
+        assert _payloads(store)["old.md"]["superseded_on"] == 20261001
+        assert any("--reinstate r1" in w for w in r.warnings)
+        # 确实要恢复时显式解除
+        r, _ = _sync(root, store, tmp_dir, reinstate=("r1",))
+        assert _payloads(store)["old.md"]["superseded_on"] == NEVER
+        assert any("已解除" in w for w in r.warnings)
+        r, _ = _sync(root, store, tmp_dir)  # 之后不会再被台账拉回去
+        assert _payloads(store)["old.md"]["superseded_on"] == NEVER
+
+    def test_chain_survives_deprecating_or_deleting_middle_ruling(self, root, store, tmp_dir):
+        """R-003 取代 R-002 取代 R-001：把 R-002 标废止、甚至删掉，R-001 都不能复活。"""
+        (root / "r1.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n一代。", "utf-8")
+        r2 = root / "r2.md"
+        r2.write_text("---\nstatus: approved\ndoc_id: r2\nsupersedes: [r1]\n---\n二代。", "utf-8")
+        (root / "r3.md").write_text(
+            "---\nstatus: approved\ndoc_id: r3\nsupersedes: [r2]\n---\n三代。", "utf-8"
+        )
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["r1.md"]["superseded_on"] == 0
+        r2.write_text("---\nstatus: deprecated\ndoc_id: r2\nsupersedes: [r1]\n---\n二代。", "utf-8")
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["r1.md"]["superseded_on"] == 0  # 标废止：不复活
+        r2.unlink()
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["r1.md"]["superseded_on"] == 0  # 删除：也不复活
+
+    def test_deleting_only_the_superseded_middle_ruling_does_not_break_later_syncs(
+        self, root, store, tmp_dir
+    ):
+        """R-003→R-002→R-001：只删中间的 R-002，R-003 对它的声明不能变成“找不到 doc_id”的错误。"""
+        (root / "r1.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n一代。", "utf-8")
+        r2 = root / "r2.md"
+        r2.write_text("---\nstatus: approved\ndoc_id: r2\nsupersedes: [r1]\n---\n二代。", "utf-8")
+        (root / "r3.md").write_text(
+            "---\nstatus: approved\ndoc_id: r3\nsupersedes: [r2]\n---\n三代。", "utf-8"
+        )
+        _sync(root, store, tmp_dir)
+        r2.unlink()
+        for _ in range(3):  # 删除当次、以及之后连续几次什么都没变的同步，都不该报错
+            r, m = _sync(root, store, tmp_dir)
+            assert not r.errors, r.errors
+            assert _payloads(store)["r1.md"]["superseded_on"] == 0   # 一代仍然退场
+            assert _payloads(store)["r3.md"]["superseded_on"] == NEVER
+        assert set(m.supersession) == {"r1", "r2"}                    # 两条关系台账里都还在
+
+    def test_deleting_earlier_of_two_superseders_keeps_the_earlier_cutoff(
+        self, root, store, tmp_dir
+    ):
+        """A(2026-01-01) 与 B(2027-01-01) 都取代 old：删掉较早的 A，old 不能在两个生效日之间复活。"""
+        (root / "old.md").write_text("---\nstatus: approved\ndoc_id: o\n---\n旧。", "utf-8")
+        a = root / "a.md"
+        a.write_text(
+            "---\nstatus: approved\ndoc_id: a\nsupersedes: [o]\neffective_from: 2026-01-01\n---\n甲。",
+            "utf-8",
+        )
+        (root / "b.md").write_text(
+            "---\nstatus: approved\ndoc_id: b\nsupersedes: [o]\neffective_from: 2027-01-01\n---\n乙。",
+            "utf-8",
+        )
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 20260101
+        a.unlink()
+        _, m = _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 20260101  # 没有被推迟到 2027
+        assert m.supersession["o"]["on"] == 20260101
+
+    def test_superseder_removing_the_claim_does_revoke(self, root, store, tmp_dir):
+        """取代者还在、但把 supersedes 改掉，是明确撤销，旧文档恢复。"""
+        (root / "old.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n旧。", "utf-8")
+        new = root / "new.md"
+        new.write_text("---\nstatus: approved\ndoc_id: r2\nsupersedes: [r1]\n---\n新。", "utf-8")
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 0
+        new.write_text("---\nstatus: approved\ndoc_id: r2\n---\n新。", "utf-8")
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == NEVER
+
+    def test_unknown_supersedes_target_is_an_error_not_just_a_hint(self, root, store, tmp_dir):
+        (root / "old.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n旧。", "utf-8")
+        (root / "new.md").write_text(
+            "---\nstatus: approved\ndoc_id: r2\nsupersedes: [old.md]\n---\n新。", "utf-8"
+        )  # 写成了文件路径而不是 doc_id
+        r, _ = _sync(root, store, tmp_dir)
+        assert "new.md" in r.errors and "doc_id" in r.errors["new.md"]
+        assert _payloads(store)["old.md"]["superseded_on"] == NEVER  # 没生效，错误里明说了
+
+    def test_editing_a_superseded_doc_never_exposes_it(self, root, store, tmp_dir, monkeypatch):
+        """改一份已被取代的旧文档：新块写入时就带 superseded_on，中途失败也不会变得可检索。"""
+        from app.rag import ingest as ingest_module
+
+        old = root / "old.md"
+        old.write_text("---\nstatus: approved\ndoc_id: r1\n---\n旧裁决。", "utf-8")
+        (root / "new.md").write_text("---\nstatus: approved\ndoc_id: r2\nsupersedes: [r1]\n---\n新。", "utf-8")
+        _sync(root, store, tmp_dir)
+        old.write_text("---\nstatus: approved\ndoc_id: r1\n---\n旧裁决（改个错别字）。", "utf-8")
+
+        def boom(*a, **k):
+            raise RuntimeError("批次中途挂了")
+
+        monkeypatch.setattr(ingest_module, "_refresh_superseded", boom)
+        with pytest.raises(RuntimeError):
+            _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 0  # 没等到回填，块上就已经是对的
 
     def test_duplicate_doc_id_second_rejected(self, root, store, tmp_dir):
         (root / "a.md").write_text("---\ndoc_id: x\n---\n甲。", "utf-8")

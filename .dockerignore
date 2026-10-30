@@ -1,40 +1,23 @@
-# 构建上下文不读 .gitignore：本机跑过 Lark 授权、接过真实数据之后，
-# 这些私有文件必须在这里显式排除，否则 `COPY . .` 会把它们打进镜像。
-.git
-.github
-.env
-.env.*
-!.env.example
-.venv
-venv
-*.egg-info
-__pycache__
-*.pyc
-.pytest_cache
-.ruff_cache
-qdrant_data
-logs
-_site
-*.log
+# 白名单：先排除一切，再只放行镜像运行所需的代码。
+#
+# 之所以不用“列黑名单”：构建上下文不读 .gitignore，而本机目录里常有没进仓库的私有文件
+# （真实业务建议书、调研资料、Lark token 缓存、wrangler 部署缓存……）。黑名单永远追不上
+# 新冒出来的文件名，`COPY . .` 一次就把它们永久打进镜像层。
+#
+# 用户自己的知识库文档（knowledge_base/）也不进镜像——它们通过 compose 的绑定挂载在运行时提供。
+*
 
-# Lark OAuth 身份缓存（oauth_server.py / fetch_lark.py 写入，含 access token）
-cashflow/user_token.json
+# 运行所需
+!app
+!requirements.txt
 
-# cashflow 真实数据、产物与本机规则/映射（.gitignore 已列，构建上下文要再排一次）
-cashflow/data
-cashflow/runs
-cashflow/patterns
-cashflow/column_map.yaml
-cashflow/related_parties.yaml
-cashflow/history_manifest.yaml
-cashflow/policy.yaml
-cashflow/advisor_rules.yaml
-cashflow/advisor_entity_map.yaml
-cashflow/entity_alias.yaml
-cashflow/advisor_paid*.yaml
-cashflow/advisor_transfers*.yaml
-cashflow/advice*/
+# 评测与示例（命令行 python -m app.rag.evaluate / 试用示例语料要用）
+!eval
+!examples
 
-# 本地任务备忘（可能含真实业务信息）
-TASK_BRIEF.md
-PLAN-*.md
+# 以上目录里的缓存与本地产物
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/*.log

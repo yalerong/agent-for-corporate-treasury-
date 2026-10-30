@@ -58,7 +58,7 @@ def populated_stores(monkeypatch, project_root, tmp_dir):
     enterprise = get_store("enterprise", embeddings, client, "test_enterprise")
     for track, store in (("industry", industry), ("enterprise", enterprise)):
         sync_directory(
-            project_root / "knowledge_base" / track, track, store,
+            project_root / "examples" / "kb" / track, track, store,
             Manifest(tmp_dir / f"manifest-{track}.json"), source_prefix=f"{track}/",
         )
     knowledge_module._stores["industry"] = industry

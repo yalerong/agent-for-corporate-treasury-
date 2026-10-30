@@ -126,10 +126,12 @@ python -m app.rag.ingest --track enterprise --root <语料目录>
 
 #### 文档元数据：谁算数、谁能看（默认从严）
 
+`knowledge_base/` 是放你自己文档的地方，**仓库里它是空的、没有任何 `_meta.yaml`**——放进去的文档一律先是待审，不会因为目录而自动生效。自带的示例文档在 `examples/kb/`（那里的 `_meta.yaml` 已批准，仅供试用，别拷进你的目录）。
+
 不写任何元数据的文档会被入库，但**检索不到**（`status` 缺省 `draft`），且按最高密级（`restricted`）处理——必须有人明确批准、明确降级才生效。三种写法，后者覆盖前者：
 
 ```yaml
-# 1) 目录默认：knowledge_base/enterprise/policies/_meta.yaml（对该目录及子目录生效）
+# 1) 目录默认：<你的文档目录>/policies/_meta.yaml（对该目录及子目录生效）
 status: approved
 classification: internal      # public < internal < restricted
 owner: 财务部
@@ -145,7 +147,11 @@ entities: [A公司, B公司]
 ---
 ```
 
-写错（字段拼错、取值或日期不合法）→ 该文档整份**不入库**并报错，旧版本的块保留；只有已批准的文档才能取代别的文档，互相取代会告警且都不生效。检索时只返回「现在算数」的块：`approved`、在生效期内、没被已生效的新文档取代；缺元数据的块一律查不到（`app/rag/access.py`）。**按角色限制可见密级目前有意不做（权限先全部放开）**，`classification` 已写进每个块，以后加只需改 `access.py`。
+写错（字段拼错、取值或日期不合法）→ 该文档整份**不入库**并报错，旧版本的块保留；只有已批准的文档才能取代别的文档，互相取代会告警且都不生效。**取代关系会被记进台账**（`manifest-*.json` 里的 `supersession`）：被新裁决取代的旧文档，不会因为取代者后来被标成废止、甚至被删除而重新生效——常见情形是 R-003 取代 R-002、R-002 又取代 R-001，清理 R-002 时不该让 R-001 复活。取代者还在、但把 `supersedes` 改掉或降回待审，才算明确撤销。取代者已被删除、确实要让旧文档重新生效时，用 `--reinstate <doc_id>`。`supersedes` 要写对方的 **doc_id**（不是文件路径）；写错会作为错误报出，退出码非 0。
+
+文档生效期按 `KB_TIMEZONE`（默认 `Asia/Shanghai`）的“今天”判断，不随容器的 UTC 日期走。
+
+检索时只返回「现在算数」的块：`approved`、在生效期内、没被已生效的新文档取代；缺元数据的块一律查不到（`app/rag/access.py`）。**按角色限制可见密级目前有意不做（权限先全部放开）**，`classification` 已写进每个块，以后加只需改 `access.py`。
 
 ### 评测：改检索或提示词前后各跑一次
 
@@ -161,7 +167,8 @@ python -m app.rag.evaluate --asof 2026-10-15 --answer     # 加回答层（需�
 ```bash
 docker compose up -d                                  # 问答 API，只监听本机 8000
 docker compose --profile local-llm up -d              # 另起本地模型（Ollama），数据不出机器
-docker compose run --rm app python -m app.rag.ingest --track enterprise     # 把 knowledge_base/enterprise/ 入库
+docker compose run --rm app python -m app.rag.ingest --track enterprise --root examples/kb/enterprise --source-prefix enterprise/   # 先用自带示例试一遍
+docker compose run --rm app python -m app.rag.ingest --track enterprise     # 入库你放在 knowledge_base/enterprise/ 的文档（默认待审，见上文元数据）
 docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要谁审批？"
 ```
 
@@ -169,7 +176,7 @@ docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要�
 
 向量库跑成独立的 `qdrant` 服务（`QDRANT_URL=http://qdrant:6333`），所以 API 在跑的时候也能直接 `docker compose run --rm app ...` 入库或提问；
 本地文件模式会独占数据目录，那种配置下两个进程只能活一个。知识库源文件走 `./knowledge_base` 绑定挂载，放进去即可；
-审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文排除了 Lark token 缓存与 cashflow 真实数据/规则文件（见 `.dockerignore`）。
+审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文是**白名单**（`.dockerignore` 先排除一切，只放行 `app/`、`eval/`、`examples/`、`requirements.txt`），所以本机目录里没进仓库的私有文件、你的知识库文档都不会被打进镜像。
 
 **当前状态**：compose 文件已用 `docker compose config` 校验，镜像尚未在干净机器上完整构建和跑通（依赖 torch，首次构建体积大）；本地模型的拉取与模型选择需要你按实际硬件定。
 

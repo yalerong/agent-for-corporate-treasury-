@@ -30,9 +30,9 @@ from app.rag.docmeta import (
     NEVER,
     DocMeta,
     MetaError,
-    compute_superseded_on,
     inputs_digest,
     resolve_meta,
+    resolve_supersession,
     split_front_matter,
 )
 from app.rag.store import Track, chunk_documents
@@ -163,17 +163,22 @@ class Manifest:
         self.path = path
         self.docs: dict[str, dict] = {}
         self.collection: str | None = None  # 这份 manifest 描述的是哪个向量集合
+        self.supersession: dict[str, dict] = {}  # 取代台账：被取代 doc_id → {"by", "on"}
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             self.docs = data.get("docs", {})
             self.collection = data.get("collection")
+            self.supersession = data.get("supersession", {})
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(
             json.dumps(
-                {"version": 1, "collection": self.collection, "docs": self.docs},
+                {
+                    "version": 1, "collection": self.collection,
+                    "supersession": self.supersession, "docs": self.docs,
+                },
                 ensure_ascii=False, indent=1,
             ),
             encoding="utf-8",
@@ -362,13 +367,42 @@ def _load(
     return resolve_meta(root, path, source, front, default_doc_id), text
 
 
-def _refresh_superseded(store, manifest: Manifest, report: SyncReport, dry_run: bool) -> None:
-    """按全库已批准文档重算 superseded_on，只对变化的文档改块 payload。"""
-    computed, warnings = compute_superseded_on(
-        {src: d["meta"] for src, d in manifest.docs.items()}
+def _refresh_superseded(
+    store,
+    manifest: Manifest,
+    report: SyncReport,
+    dry_run: bool,
+    reinstate: tuple[str, ...] = (),
+) -> None:
+    """按取代台账重算 superseded_on，只对变化的文档改块 payload。"""
+    present = {d["meta"]["doc_id"] for d in manifest.docs.values()}
+    for doc_id in reinstate:
+        entry = manifest.supersession.get(doc_id)
+        if entry is None:
+            report.warnings.append(f"--reinstate {doc_id}：台账里没有这份文档的取代记录")
+        elif entry["by"] in present:
+            report.warnings.append(
+                f"--reinstate {doc_id}：取代它的 {entry['by']} 还在知识库里，"
+                "请改动或删除那份文档里的 supersedes，而不是用 --reinstate"
+            )
+        else:
+            del manifest.supersession[doc_id]
+            report.warnings.append(f"{doc_id} 已解除被取代状态")
+    res = resolve_supersession(
+        {src: d["meta"] for src, d in manifest.docs.items()}, manifest.supersession
     )
-    report.warnings.extend(warnings)
-    for src, value in computed.items():
+    report.warnings.extend(res.warnings)
+    for src, old_id in res.missing:
+        # supersedes 写错（常见：写成了文件路径而不是 doc_id）不能只是提示：
+        # 旧制度会照常可检索，用户还以为已经取代了
+        report.errors[src] = (
+            f"supersedes 引用的 doc_id {old_id!r} 不在知识库里（要写对方的 doc_id，不是文件路径）；"
+            "取代关系未生效，被它想取代的旧文档仍在提供服务"
+        )
+    if not dry_run and manifest.supersession != res.ledger:
+        manifest.supersession = res.ledger
+        manifest.save()
+    for src, value in res.by_source.items():
         d = manifest.docs[src]
         if d.get("superseded_on", NEVER) == value or dry_run:
             continue
@@ -394,6 +428,7 @@ def sync_directory(
     chunk_size: int = 500,
     chunk_overlap: int = 50,
     source_prefix: str = "",
+    reinstate: tuple[str, ...] = (),
 ) -> SyncReport:
     """把 root 与 manifest 对账，增量写入 store。返回逐文档的处理报告。
 
@@ -462,6 +497,11 @@ def sync_directory(
     # 否则可读目录里的新文档能把同一个 id 抢走，manifest 里出现两个同 id 文档
     retained = manifest.docs.keys() if report.scan_errors else on_disk.keys()
     claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in retained}
+    # 改动过的文档写块时直接带上应有的 superseded_on：先写 NEVER 再回填的话，
+    # 一份已被取代的旧文档改个错别字，批次结束前（或批次中途出错时一直）都能被检索到
+    pre_superseded = resolve_supersession(
+        {src: d["meta"] for src, d in manifest.docs.items()}, manifest.supersession
+    ).by_doc_id
     for source, path in on_disk.items():
         old = manifest.docs.get(source)
         try:
@@ -482,6 +522,11 @@ def sync_directory(
         except (ParseError, MetaError) as e:
             # 读不出或元数据非法：旧块原样保留（宁可旧，不可空/不可错放行），新文件不入库
             report.errors[source] = str(e)
+            if old and old["meta"]["status"] == "approved":
+                report.errors[source] += (
+                    "（⚠ 这份文档的旧版本仍是已批准状态、仍在被检索；"
+                    "想废止它的话，这次的改动没有生效，请先修好上面的问题）"
+                )
             continue
         if old and old["meta"]["doc_id"] != meta.doc_id:
             # 换了 doc_id：旧 id 的占坑要释放，否则同批次里复用该 id 的文档会被误拒
@@ -495,7 +540,7 @@ def sync_directory(
                 "chunk_ids": old["chunk_ids"] if old else [],
                 "indexed_at": "",
                 "meta": meta.to_dict(),
-                "superseded_on": NEVER,
+                "superseded_on": pre_superseded.get(meta.doc_id, NEVER),
             }
             continue
         base = Document(
@@ -505,7 +550,7 @@ def sync_directory(
                 "category": category,
                 "subcategory": path.parent.name,
                 "doc_sha": digest,
-                "superseded_on": NEVER,
+                "superseded_on": pre_superseded.get(meta.doc_id, NEVER),
                 **meta.payload(),
             },
         )
@@ -520,7 +565,8 @@ def sync_directory(
         _cleanup_migrated(store, old)  # 改过 source 的：旧名字下的块一并清掉
         manifest.docs[source] = {
             "sha256": digest, "chunk_ids": ids, "indexed_at": now,
-            "meta": meta.to_dict(), "superseded_on": NEVER,
+            "meta": meta.to_dict(),
+            "superseded_on": pre_superseded.get(meta.doc_id, NEVER),
             **({"pinned_doc_id": True} if pinned else {}),
         }
         manifest.save()
@@ -537,7 +583,7 @@ def sync_directory(
         del manifest.docs[source]
         manifest.save()
 
-    _refresh_superseded(store, manifest, report, dry_run)
+    _refresh_superseded(store, manifest, report, dry_run, reinstate)
     report.drafts = sorted(
         src for src, d in manifest.docs.items() if d["meta"]["status"] != "approved"
     )
@@ -553,6 +599,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--track", choices=["industry", "enterprise"], required=True)
     p.add_argument("--root", type=Path, help="源目录；缺省用该 track 的配置路径")
     p.add_argument("--source-prefix", help="加在每个 source 前的前缀；缺省用配置路径时为 <track>/")
+    p.add_argument(
+        "--reinstate", action="append", default=[], metavar="DOC_ID",
+        help="解除某份旧文档“已被取代”的状态（仅当取代它的文档已被删除时可用），可重复",
+    )
     p.add_argument("--dry-run", action="store_true", help="只对账不写入（不加载模型、不碰向量库）")
     p.add_argument("--force", action="store_true", help="放行大批量删除，或重建无 manifest 的旧索引")
     args = p.parse_args(argv)
@@ -563,7 +613,8 @@ def main(argv: list[str] | None = None) -> int:
     store = None if args.dry_run else get_store(track, get_embeddings())
     prefix = args.source_prefix if args.source_prefix is not None else ("" if args.root else f"{track}/")
     report = sync_directory(
-        root, track, store, manifest, dry_run=args.dry_run, force=args.force, source_prefix=prefix
+        root, track, store, manifest, dry_run=args.dry_run, force=args.force, source_prefix=prefix,
+        reinstate=tuple(args.reinstate),
     )
     print(report.summary())
     for src, err in report.errors.items():

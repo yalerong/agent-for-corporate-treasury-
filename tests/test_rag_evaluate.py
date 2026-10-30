@@ -137,3 +137,15 @@ def test_empty_split_is_error_not_green(monkeypatch, tmp_path, capsys):
 
     rc = ev.main(["--asof", "2026-10-15", "--holdout", "--questions", str(only_dev)])
     assert rc == 2 and "holdout" in capsys.readouterr().err
+
+
+def test_pure_no_answer_questions_are_not_counted_as_retrieval_passes(eval_store):
+    """t03/h03 这类“资料里没有”的题，检索层没有可断言的来源：标 n/a，不计入通过率。"""
+    qs = load_questions(QFILE)
+    res = run_eval(eval_store, qs, asof=ASOF, k=4)["retrieval"]
+    skipped = {r.id for r in res if r.skipped}
+    assert "t03" in skipped
+    assert not ({"n01", "s01", "t01"} & skipped)  # 有来源可断言的题照常计分
+    report = format_report({"retrieval": res})
+    assert "n/a" in report
+    assert f"/{len(res) - len(skipped)}" in report  # 分母不含 n/a 的题

@@ -8,7 +8,7 @@ from scripts.update_enterprise_kb import main as update_main
 
 class TestUpdateEnterpriseKB:
     def test_check_mode_prints_doc_count(self, capsys, project_root, monkeypatch):
-        monkeypatch.setenv("ENTERPRISE_KB_PATH", str(project_root / "knowledge_base" / "enterprise"))
+        monkeypatch.setenv("ENTERPRISE_KB_PATH", str(project_root / "examples" / "kb" / "enterprise"))
         from app.config import get_settings
         get_settings.cache_clear()
         rc = update_main(["--check"])
