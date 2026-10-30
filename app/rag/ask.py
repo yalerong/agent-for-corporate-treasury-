@@ -14,6 +14,7 @@ from datetime import date
 
 from app.config import get_settings
 from app.rag.access import active_filter
+from app.rag.clock import today
 from app.rag.evaluate import REFUSAL_PHRASE, build_answer_fn
 
 
@@ -55,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--asof", default=None, help="按某天的口径回答，缺省今天")
     args = p.parse_args(argv)
     tracks = ["industry", "enterprise"] if args.track == "both" else [args.track]
-    asof = date.fromisoformat(args.asof) if args.asof else date.today()
+    asof = date.fromisoformat(args.asof) if args.asof else today()
     use_llm = bool(get_settings().llm_api_key.get_secret_value())
     print(ask(args.question, tracks, args.k, asof, use_llm=use_llm))
     return 0

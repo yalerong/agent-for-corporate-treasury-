@@ -15,13 +15,14 @@ from datetime import date
 
 from qdrant_client.http import models as qm
 
+from app.rag.clock import today as _today
 from app.rag.docmeta import to_int
 
 _KEY = "metadata."
 
 
 def active_filter(today: date | None = None) -> qm.Filter:
-    t = to_int(today or date.today())
+    t = to_int(today or _today())
     return qm.Filter(
         must=[
             qm.FieldCondition(key=_KEY + "status", match=qm.MatchValue(value="approved")),
