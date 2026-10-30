@@ -119,6 +119,21 @@ class TestResolve:
         with pytest.raises(MetaError, match="目录级"):
             resolve_meta(root, f, "a.md", None)
 
+    def test_mixed_type_keys_raise_meta_error(self, root):
+        # YAML 里数字键 + 未知字符串键：排序会 TypeError，不能让它逃出文档级边界
+        f = root / "a.md"
+        f.write_text("x", "utf-8")
+        (root / "a.md.meta.yaml").write_text("1: 值\nstaus: approved\n", "utf-8")
+        with pytest.raises(MetaError, match="未知"):
+            resolve_meta(root, f, "a.md", None)
+
+    def test_mixed_type_keys_in_dir_meta_raise_meta_error(self, root):
+        (root / "_meta.yaml").write_text("1: 值\nstaus: approved\n", "utf-8")
+        f = root / "a.md"
+        f.write_text("x", "utf-8")
+        with pytest.raises(MetaError, match="目录级"):
+            resolve_meta(root, f, "a.md", None)
+
     def test_front_matter_and_sidecar_conflict(self, root):
         f = root / "a.md"
         f.write_text("x", "utf-8")

@@ -285,6 +285,34 @@ class TestSync:
         r2, _ = _sync(corpus, store, tmp_dir, force=True)
         assert not r2.blocked and _count(store) == n
 
+    def test_scan_error_keeps_id_reservations(self, corpus, store, tmp_dir, monkeypatch):
+        _sync(corpus, store, tmp_dir)
+        # 可读目录里放一份冒用不可读文档 doc_id 的新文档
+        (corpus / "copy.md").write_text("---\ndoc_id: policies/fx.txt\n---\n冒用。", "utf-8")
+        blocked_dir = corpus / "policies"
+        real_iterdir = Path.iterdir
+
+        def fake_iterdir(self):
+            if self == blocked_dir:
+                raise PermissionError(13, "Access denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+        r, m = _sync(corpus, store, tmp_dir)
+        assert r.scan_errors and "已被" in r.errors["copy.md"]
+        ids = [d["meta"]["doc_id"] for d in m.docs.values()]
+        assert len(ids) == len(set(ids))  # 不可读文档的 id 没被抢走
+
+    def test_dry_run_checks_proposed_metadata(self, corpus, store, tmp_dir):
+        # 预演也要按"拟入库"的元数据出草稿清单和取代关系告警，且不污染调用方的 manifest
+        (corpus / "draft.md").write_text("无元数据。", "utf-8")
+        (corpus / "new.md").write_text(
+            "---\nstatus: approved\ndoc_id: n2\nsupersedes: [ghost]\n---\n新制度。", "utf-8"
+        )
+        r, m = _sync(corpus, store, tmp_dir, dry_run=True)
+        assert "draft.md" in r.drafts
+        assert any("ghost" in w for w in r.warnings)
+        assert not m.docs and _count(store) == 0
 
 def test_index_track_propagates_failure(monkeypatch, tmp_dir):
     """批量入口不能把"某份文档失败/整批被拒"当成刷新成功。"""
