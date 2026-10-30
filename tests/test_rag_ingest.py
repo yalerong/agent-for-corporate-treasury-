@@ -1,7 +1,10 @@
 """知识库摄取管线：解析、增量同步、删除对账、失败保旧、批量删除保险丝。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 
 from app.rag import get_store
@@ -180,13 +183,68 @@ class TestSync:
         assert len(r.added) == 2 and _count(store) == 0 and not m.docs
         assert not (tmp_dir / "m.json").exists()
 
+    def test_dry_run_needs_no_store(self, corpus, tmp_dir):
+        # 预演只读文件系统与 manifest：不加载模型、不建集合
+        r = sync_directory(
+            corpus, "enterprise", None, Manifest(tmp_dir / "m.json"), dry_run=True
+        )
+        assert sorted(r.added) == ["policies/fx.txt", "policies/transfer.md"]
+        assert not (tmp_dir / "m.json").exists()
+
+    def test_unreadable_directory_skips_deletion(self, corpus, store, tmp_dir, monkeypatch):
+        _sync(corpus, store, tmp_dir)
+        n = _count(store)
+        blocked_dir = corpus / "policies"
+        real_iterdir = Path.iterdir
+
+        def fake_iterdir(self):
+            if self == blocked_dir:
+                raise PermissionError(13, "Access denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+        r, m = _sync(corpus, store, tmp_dir)
+        assert r.scan_errors and not r.deleted
+        assert _count(store) == n and len(m.docs) == 2
+
+    def test_unreadable_file_is_per_document_error(self, corpus, store, tmp_dir, monkeypatch):
+        _sync(corpus, store, tmp_dir)
+        n = _count(store)
+        (corpus / "policies" / "fx.txt").write_text("购汇额度上限调整为预算的 80%。", "utf-8")
+        from app.rag import ingest as ingest_module
+
+        real_sha = ingest_module.file_sha256
+
+        def fake_sha(path):
+            if path.name == "fx.txt":
+                raise PermissionError(13, "Access denied")
+            return real_sha(path)
+
+        monkeypatch.setattr(ingest_module, "file_sha256", fake_sha)
+        r, m = _sync(corpus, store, tmp_dir)
+        assert "读取失败" in r.errors["policies/fx.txt"]
+        assert _count(store) == n and m.docs["policies/fx.txt"]["sha256"]  # 旧版本原样保留
+
+    def test_legacy_collection_requires_forced_rebuild(self, corpus, store, tmp_dir):
+        # 旧索引：随机块 ID、没有 manifest。对不了账，继续同步只会叠重复块
+        store.add_documents([Document(page_content="旧索引", metadata={"source": "policies/fx.txt"})])
+        r, m = _sync(corpus, store, tmp_dir)
+        assert r.blocked and "manifest" in r.blocked and not m.docs
+        r2, m2 = _sync(corpus, store, tmp_dir, force=True)
+        assert not r2.blocked and r2.warnings
+        assert sorted(m2.docs) == ["policies/fx.txt", "policies/transfer.md"]
+        assert _count(store) == sum(len(d["chunk_ids"]) for d in m2.docs.values())
+
     def test_chunk_metadata_and_stable_ids(self, corpus, store, tmp_dir):
         _, m1 = _sync(corpus, store, tmp_dir)
         hit = store.similarity_search("跨主体调拨", k=1)[0]
         assert hit.metadata["source"] == "policies/transfer.md"
         assert hit.metadata["doc_sha"] and "chunk_index" in hit.metadata
-        # 清空 manifest 重跑：确定性 ID → upsert 覆盖，不产生重复块
+        # 清空 manifest 重跑：集合里已有块但没法对账 → 先拒绝
         n = _count(store)
         (tmp_dir / "m.json").unlink()
-        _sync(corpus, store, tmp_dir)
-        assert _count(store) == n
+        r, _ = _sync(corpus, store, tmp_dir)
+        assert r.blocked and _count(store) == n
+        # --force 重建：确定性 ID 不变 → 块数不变，不产生重复
+        r2, _ = _sync(corpus, store, tmp_dir, force=True)
+        assert not r2.blocked and _count(store) == n
