@@ -119,6 +119,9 @@ python -m app.rag.ingest --track enterprise --root <语料目录>
 
 支持 `.md/.txt/.docx/.pdf/.xlsx/.csv`；按内容哈希只处理新增/改动/删除，源文件删了索引里的块一并删除；
 解析失败（损坏、加密、扫描件无文字层）保留旧块并报错；一次要删掉超过一半已入库文档时默认拒绝（`--force` 放行）。
+`--dry-run` 只读文件系统与 manifest，不加载模型、不碰向量库。
+如果集合里已有旧索引（`scripts.build_kb` 写的、没有 manifest）或 manifest 丢了，首次同步会拒绝执行；
+确认丢弃旧索引后加 `--force` 重建（先清空该集合，再按源文件全量入库）。
 真实语料放私有仓，不进本仓。
 
 #### 文档元数据：谁算数、谁能看（默认从严）
@@ -163,6 +166,11 @@ docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要�
 ```
 
 `ask` 只用「现在算数」的文档回答，每条结果带 doc_id、来源和生效期；一条都没命中就直接说资料中没有，不去问模型；没配置 LLM 时只列原文和出处。
+
+向量库跑成独立的 `qdrant` 服务（`QDRANT_URL=http://qdrant:6333`），所以 API 在跑的时候也能直接 `docker compose run --rm app ...` 入库或提问；
+本地文件模式会独占数据目录，那种配置下两个进程只能活一个。知识库源文件走 `./knowledge_base` 绑定挂载，放进去即可；
+审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文排除了 Lark token 缓存与 cashflow 真实数据/规则文件（见 `.dockerignore`）。
+
 **当前状态**：compose 文件已用 `docker compose config` 校验，镜像尚未在干净机器上完整构建和跑通（依赖 torch，首次构建体积大）；本地模型的拉取与模型选择需要你按实际硬件定。
 
 ## 多智能体协作 demo（一条命令，无需任何 Key）

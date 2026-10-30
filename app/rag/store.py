@@ -41,8 +41,14 @@ def get_embeddings() -> Embeddings:
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:
-    """Qdrant 本地文件模式客户端单例。同一 path 在同一进程内不能开多个。"""
+    """Qdrant 客户端单例。
+
+    配了 QDRANT_URL 就连服务端（API 与 CLI 进程可以同时用同一个库）；
+    否则用本地文件模式——同一 path 在同一进程内不能开多个，跨进程更是互斥锁。
+    """
     s = get_settings()
+    if s.qdrant_url:
+        return QdrantClient(url=s.qdrant_url)
     path_str = str(s.qdrant_path)
     if path_str in (":memory:", "memory"):
         return QdrantClient(location=":memory:")
@@ -142,8 +148,9 @@ def index_track(track: Track) -> int:
 
     走 ingest 的内容哈希增量同步（重跑不产生重复块、删掉的文件会从索引移除），
     并带上文档元数据；没写元数据的文档按"待审"入库、检索不到。
+    同步被拒绝或还有文档失败时抛 IngestError——旧块虽然还留着，但那不是"刷新成功"。
     """
-    from app.rag.ingest import Manifest, sync_directory
+    from app.rag.ingest import IngestError, Manifest, sync_directory
 
     s = get_settings()
     path = s.industry_kb_path if track == "industry" else s.enterprise_kb_path
@@ -153,6 +160,8 @@ def index_track(track: Track) -> int:
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}")
+    if report.blocked or report.errors:
+        raise IngestError(report.summary())
     return sum(len(d["chunk_ids"]) for d in manifest.docs.values())
 
 

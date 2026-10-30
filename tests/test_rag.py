@@ -99,6 +99,25 @@ class TestChunkDocuments:
         assert all(len(c.page_content) <= 250 for c in chunks)
 
 
+class TestQdrantClient:
+    def test_qdrant_url_uses_server_mode(self, monkeypatch, tmp_dir):
+        """配了 QDRANT_URL 就走服务端：不建本地数据目录（多进程共享靠它）。"""
+        from app.config import get_settings
+        from app.rag import store as store_module
+
+        monkeypatch.setenv("QDRANT_URL", "http://127.0.0.1:6333")
+        monkeypatch.setenv("QDRANT_PATH", str(tmp_dir / "embedded_data"))
+        get_settings.cache_clear()
+        store_module.get_qdrant_client.cache_clear()
+        try:
+            client = store_module.get_qdrant_client()
+            assert str(client._client.rest_uri).startswith("http://127.0.0.1:6333")
+            assert not (tmp_dir / "embedded_data").exists()
+        finally:
+            store_module.get_qdrant_client.cache_clear()
+            get_settings.cache_clear()
+
+
 class TestDualTrackRetrieval:
     """端到端最小检索链路：加载 stub → 索引 → 双轨检索 → 分离验证。"""
 

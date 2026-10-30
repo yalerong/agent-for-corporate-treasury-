@@ -92,3 +92,24 @@ def test_answer_layer_with_stub_fn(eval_store):
     normals = [r for r in ans if not r.category.startswith("trap")]
     assert all(r.passed for r in traps) and not any(r.passed for r in normals)
     assert "[answer]" in format_report(always_refuse)
+
+
+def test_empty_split_is_error_not_green(monkeypatch, tmp_path, capsys):
+    """题集里没有该 split 的题时不能报"0/0 全过"——高分不等于通过。"""
+    from types import SimpleNamespace
+
+    import app.rag.ingest as ingest_module
+    import app.rag.store as store_module
+    from app.rag import evaluate as ev
+
+    only_dev = tmp_path / "q.jsonl"
+    only_dev.write_text('{"id":"d1","split":"dev","question":"?"}\n', "utf-8")
+    monkeypatch.setattr(store_module, "get_embeddings", lambda: object())
+    monkeypatch.setattr(store_module, "get_store", lambda *a, **k: object())
+    monkeypatch.setattr(
+        ingest_module, "sync_directory",
+        lambda *a, **k: SimpleNamespace(errors={}, blocked=None),
+    )
+
+    rc = ev.main(["--asof", "2026-10-15", "--holdout", "--questions", str(only_dev)])
+    assert rc == 2 and "holdout" in capsys.readouterr().err

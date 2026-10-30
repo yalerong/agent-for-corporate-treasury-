@@ -153,6 +153,15 @@ def sidecar_path(path: Path) -> Path:
     return path.with_name(path.name + ".meta.yaml")
 
 
+def _read_yaml_file(path: Path, where: str) -> dict:
+    """读一个 YAML 元数据文件。读不了或不是 UTF-8 → MetaError（单份文档的错误，不中断整批）。"""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise MetaError(f"{where} 读取失败（元数据文件要 UTF-8 编码）: {e}") from e
+    return _load_yaml_mapping(text, where)
+
+
 def inputs_digest(root: Path, path: Path, file_sha: str) -> str:
     """文档指纹 = 文件内容 + 影响它元数据的外部文件。任一变化都应触发重新入库。"""
     h = hashlib.sha256(file_sha.encode())
@@ -167,7 +176,7 @@ def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None)
     """合并三层元数据并校验。front_matter 由调用方在解析正文时一并取出。"""
     raw: dict = {}
     for f in _dir_meta_files(root, path):
-        layer = _load_yaml_mapping(f.read_text(encoding="utf-8-sig"), str(f.relative_to(root)))
+        layer = _read_yaml_file(f, str(f.relative_to(root)))
         bad = set(layer) - _DIR_FIELDS
         if bad:
             raise MetaError(
@@ -182,7 +191,7 @@ def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None)
     if front_matter is not None:
         own = front_matter
     elif side.is_file():
-        own = _load_yaml_mapping(side.read_text(encoding="utf-8-sig"), side.name)
+        own = _read_yaml_file(side, side.name)
     bad = set(own) - _DOC_FIELDS
     if bad:
         raise MetaError(f"未知元数据字段（拼写错误？）: {sorted(bad)}")
