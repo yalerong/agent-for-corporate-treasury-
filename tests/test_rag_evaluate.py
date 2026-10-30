@@ -68,6 +68,16 @@ def test_score_answer_refusal_and_keywords():
     assert not score_answer(trap, "每晚 800 元").passed               # 该拒答却作答
 
 
+def test_refusal_must_be_standalone_not_substring():
+    trap = Question(id="t03", question="?", must_refuse=True)
+    fabricated = "资料中没有明确规定，但公司的股票期权通常每年向员工发放 1000 股。"
+    assert not score_answer(trap, fabricated).passed  # 带着拒答词却在编造：不能拿绿灯
+    for ok in (REFUSAL_PHRASE, f"  {REFUSAL_PHRASE}。\n", f"“{REFUSAL_PHRASE}”"):
+        assert score_answer(trap, ok).passed, ok  # 只有标记本身（容忍首尾标点引号）
+    normal = Question(id="n", question="?", expect_text=["资金经理"])
+    assert score_answer(normal, "资料中没有明确规定，但须资金经理审批。").passed  # 普通题不被误判成拒答
+
+
 def test_synthetic_corpus_traps_hold_at_retrieval_level(eval_store):
     """草稿、已废止、被取代的文档，在评测日期下绝不出现在检索结果里。"""
     results = run_eval(eval_store, load_questions(QFILE), asof=ASOF, k=6)

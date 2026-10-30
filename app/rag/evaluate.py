@@ -84,9 +84,21 @@ def score_retrieval(q: Question, sources: list[str]) -> Result:
     return Result(q.id, q.category, not reasons, reasons)
 
 
+_STRIP = " \t\r\n。.！!，,；;：:\"'“”‘’「」『』（）()[]【】"
+
+
+def is_refusal(answer: str) -> bool:
+    """整段回答就是拒答标记才算拒答（容忍首尾空白、标点、引号）。
+
+    不能用"包含"判断：`资料中没有明确规定，但通常每年发 1000 股` 带着拒答词却在编造，
+    按"包含"算会让不支持的回答拿到绿灯，而评测要抓的恰恰是这种。
+    """
+    return answer.strip(_STRIP) == REFUSAL_PHRASE
+
+
 def score_answer(q: Question, answer: str) -> Result:
     reasons = []
-    refused = REFUSAL_PHRASE in answer
+    refused = is_refusal(answer)
     if q.must_refuse and not refused:
         reasons.append("该拒答却作答")
     if not q.must_refuse and refused:
