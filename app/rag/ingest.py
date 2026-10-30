@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from langchain_core.documents import Document
+from qdrant_client.http import models as qm
 
 from app.rag.docmeta import (
     NEVER,
@@ -60,22 +61,30 @@ def _read_text(path: Path) -> str:
 
 def _parse_docx(path: Path) -> str:
     from docx import Document as DocxDocument
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     doc = DocxDocument(str(path))
     parts: list[str] = []
-    for p in doc.paragraphs:
-        text = p.text.strip()
-        if not text:
-            continue
-        style = (p.style.name or "") if p.style is not None else ""
-        if style.startswith("Heading"):
-            level = "".join(c for c in style if c.isdigit()) or "1"
-            parts.append("#" * min(int(level), 6) + " " + text)
-        else:
-            parts.append(text)
-    for t in doc.tables:
-        rows = [" | ".join(c.text.strip().replace("\n", " ") for c in r.cells) for r in t.rows]
-        parts.append("\n".join(rows))
+    # 段落和表格必须按在文档里的先后顺序走，否则表格会被甩到所有章节之后，挂错标题
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            p = Paragraph(child, doc)
+            text = p.text.strip()
+            if not text:
+                continue
+            style = (p.style.name or "") if p.style is not None else ""
+            if style.startswith("Heading"):
+                level = "".join(c for c in style if c.isdigit()) or "1"
+                parts.append("#" * min(int(level), 6) + " " + text)
+            else:
+                parts.append(text)
+        elif tag == "tbl":
+            t = Table(child, doc)
+            parts.append("\n".join(
+                " | ".join(c.text.strip().replace("\n", " ") for c in r.cells) for r in t.rows
+            ))
     return "\n\n".join(parts)
 
 
@@ -152,14 +161,20 @@ class Manifest:
     def __init__(self, path: Path):
         self.path = path
         self.docs: dict[str, dict] = {}
+        self.collection: str | None = None  # 这份 manifest 描述的是哪个向量集合
         if path.exists():
-            self.docs = json.loads(path.read_text(encoding="utf-8")).get("docs", {})
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.docs = data.get("docs", {})
+            self.collection = data.get("collection")
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(
-            json.dumps({"version": 1, "docs": self.docs}, ensure_ascii=False, indent=1),
+            json.dumps(
+                {"version": 1, "collection": self.collection, "docs": self.docs},
+                ensure_ascii=False, indent=1,
+            ),
             encoding="utf-8",
         )
         os.replace(tmp, self.path)
@@ -237,6 +252,31 @@ def _chunk_ids(source: str, sha: str, n: int) -> list[str]:
     return [str(uuid.uuid5(_NS, f"{source}#{sha}#{i}")) for i in range(n)]
 
 
+def _delete_source(store, source: str, keep_sha: str | None = None) -> None:
+    """按 source 删块（可保留指定内容哈希的那一版）。
+
+    不依赖 manifest 里记的块 ID：更新中途失败时，新块已写入但还没记进 manifest，
+    之后这份文档被改或被删，只按旧记录删就会让那批块永远留在索引里、继续被检索到。
+    """
+    key = f"{store.METADATA_KEY}."
+    must = [qm.FieldCondition(key=key + "source", match=qm.MatchValue(value=source))]
+    must_not = (
+        [qm.FieldCondition(key=key + "doc_sha", match=qm.MatchValue(value=keep_sha))]
+        if keep_sha else []
+    )
+    store.client.delete(
+        store.collection_name,
+        points_selector=qm.FilterSelector(filter=qm.Filter(must=must, must_not=must_not)),
+    )
+
+
+def _cleanup_migrated(store, old: dict | None) -> None:
+    """source 改名迁移成功后，把旧名字下的块清掉（幂等，记号随新 entry 一起消失）。"""
+    old_source = (old or {}).pop("migrated_from", None)
+    if old_source:
+        _delete_source(store, old_source)
+
+
 def _drop_all(store) -> int:
     """清空集合里所有块（显式重建用：没有 manifest 时无法逐块对账）。"""
     deleted = 0
@@ -271,6 +311,7 @@ def _migrate_source_prefix(
             continue
         entry = manifest.docs.pop(source)
         entry["sha256"] = ""
+        entry["migrated_from"] = source  # 重建成功后按旧名字清理块
         manifest.docs[new_source] = entry
         moved += 1
     if moved:
@@ -358,6 +399,23 @@ def sync_directory(
     if store is None and not dry_run:
         raise ValueError("store 不能为空（只有 dry_run 可以不带）")
 
+    if not dry_run:
+        # manifest 只对它建账时的那个集合有效：换了集合名或集合被重建，"哈希没变就跳过"
+        # 会让新集合一直是空的却报告成功
+        if manifest.docs and manifest.collection not in (None, store.collection_name):
+            report.blocked = (
+                f"manifest 属于集合 {manifest.collection!r}，当前集合是 {store.collection_name!r}；"
+                "换了集合请换一份 manifest（或删掉旧 manifest）后重新同步"
+            )
+            return report
+        if manifest.docs and store.client.count(store.collection_name, exact=True).count == 0:
+            report.blocked = (
+                f"manifest 记录了 {len(manifest.docs)} 份文档，但集合是空的"
+                "（集合被删除或重建过？）；删掉 manifest 后重新同步"
+            )
+            return report
+        manifest.collection = store.collection_name
+
     on_disk = scan_root(root, source_prefix, errors=report.scan_errors)
     _migrate_source_prefix(manifest, on_disk, source_prefix, report, dry_run)
     _upgrade_legacy_entries(manifest, report, dry_run)
@@ -435,10 +493,8 @@ def sync_directory(
             c.metadata["chunk_index"] = i
             c.metadata["indexed_at"] = now
         store.add_documents(chunks, ids=ids)  # 先写新块，再删旧块：中途失败只会多不会缺
-        if old:
-            stale = [i for i in old["chunk_ids"] if i not in set(ids)]
-            if stale:
-                store.delete(ids=stale)
+        _delete_source(store, source, keep_sha=digest)  # 按 source 清旧版，中断残留下次也能清
+        _cleanup_migrated(store, old)  # 改过 source 的：旧名字下的块一并清掉
         manifest.docs[source] = {
             "sha256": digest, "chunk_ids": ids, "indexed_at": now,
             "meta": meta.to_dict(), "superseded_on": NEVER,
@@ -449,9 +505,7 @@ def sync_directory(
         report.deleted.append(source)
         if dry_run:
             continue
-        ids = manifest.docs[source]["chunk_ids"]
-        if ids:
-            store.delete(ids=ids)
+        _delete_source(store, source)
         del manifest.docs[source]
         manifest.save()
 
