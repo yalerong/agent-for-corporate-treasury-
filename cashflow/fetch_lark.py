@@ -6,11 +6,16 @@
 
 云表格走用户身份 OAuth（user_access_token，一次性回调脚本 oauth_server.py 换 code）；
 审批走应用身份（tenant_access_token）——2026-09-06 实测 instances/query 对 user token 返回 "not support"。
-实测无需额外加 scope：应用已有的用户身份权限就能跑 Drive 导出；审批实例查询用 tenant token 即通。
+Drive 导出与审批查询无需额外 scope：应用已有的用户身份权限就能跑；审批实例查询用 tenant token 即通。
+但**部分接口必须在授权链接上显式申请 scope 才会进 token**——2026-09-27 实测：云空间文件列表
+（/drive/v1/files）、搜索云文档（/suite/docs-api/search/object）、知识库（/wiki/v2/*）不写 scope 时
+同意页照过、token 里却缺这几项，接口报 99991679；用 LARK_OAUTH_SCOPE 显式申请即可（见下方变量表）。
 user_access_token 2 小时过期：过期时本脚本会提示重跑授权（--auth 会替你起回调服务并打印授权链接）。
 
 环境变量（.env）：
     LARK_APP_ID / LARK_APP_SECRET   应用凭据（只从环境变量/.env 读取）
+    LARK_OAUTH_SCOPE        可选：授权链接显式申请的 scope（空格分隔，如
+                            "drive:drive:readonly search:docs:read wiki:wiki:readonly"），缺省空=不申请
     LARK_OAUTH_SERVER       一次性 OAuth 回调脚本路径（默认与本文件同目录 oauth_server.py）
     LARK_USER_TOKEN_FILE    user token 缓存（默认与回调脚本同目录 user_token.json）
     LARK_SHEET_BANK / LARK_SHEET_PAY / LARK_SHEET_BUDGET   三张表的 spreadsheet token（URL 里 /sheets/<token>）
@@ -100,13 +105,28 @@ def load_token() -> str:
     return tok
 
 
+def build_auth_url(state: str, scope: str = "") -> str:
+    """拼授权链接。scope 非空则显式申请（空格分隔的 scope 列表，URL 编码后拼 &scope=）。
+
+    2026-09-27 实测：即使应用后台已"开通"某权限，授权链接不带 scope 时用户点同意也拿不到
+    （token 里没有该 scope，接口 99991679）；显式申请后同意页会列出这几项、授权即生效。
+    """
+    url = (f"{auth_host_for_api_base()}/open-apis/authen/v1/authorize?app_id={APP_ID}"
+           f"&redirect_uri={requests.utils.quote(REDIRECT, safe='')}&state={state}")
+    scope = (scope or "").strip()
+    if scope:
+        url += f"&scope={requests.utils.quote(scope, safe='')}"
+    return url
+
+
 def do_auth() -> None:
     if not OAUTH_SERVER.exists():
         raise SystemExit(f"找不到 {OAUTH_SERVER}")
     state = secrets.token_urlsafe(24)
-    url = (f"{auth_host_for_api_base()}/open-apis/authen/v1/authorize?app_id={APP_ID}"
-           f"&redirect_uri={requests.utils.quote(REDIRECT, safe='')}&state={state}")
-    print("1) 回调服务已在 :3000 等待\n2) 浏览器打开下面链接并点同意：\n\n   " + url + "\n", flush=True)
+    scope = os.environ.get("LARK_OAUTH_SCOPE", "")
+    url = build_auth_url(state, scope)
+    note = f"（显式申请 {len(scope.split())} 项 scope）" if scope.strip() else "（用应用默认权限集）"
+    print(f"1) 回调服务已在 :3000 等待\n2) 浏览器打开下面链接并点同意{note}：\n\n   {url}\n", flush=True)
     env = {**os.environ, "LARK_OAUTH_STATE": state}
     proc = subprocess.run([sys.executable, str(OAUTH_SERVER)], check=False, env=env)
     if proc.returncode:

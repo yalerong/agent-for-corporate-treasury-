@@ -1,5 +1,9 @@
 """fetch_lark_docs 的纯逻辑测试：文件名安全化 / URL 拼接 / 搜索面扫的 offset 上限。"""
+import csv
+import sys
+
 import fetch_lark_docs
+import pytest
 
 
 def test_safe_name_sanitizes_illegal_chars_and_appends_token():
@@ -59,3 +63,73 @@ def test_sweep_search_dedupes_against_existing_rows(monkeypatch):
 
     assert [r["token"] for r in rows] == ["dup", "new"]
     assert problems == []
+
+
+def test_list_wiki_follows_pages_after_empty_page(monkeypatch):
+    pages = {
+        None: {"items": [], "has_more": True, "page_token": "page2"},
+        "page2": {"items": [{"space_id": "s1", "name": "First"}],
+                  "has_more": True, "page_token": "page3"},
+        "page3": {"items": [{"space_id": "s2", "name": "Second"}], "has_more": False},
+    }
+    calls = []
+    walked = []
+
+    def fake_get(path, token, **kwargs):
+        assert path == "/wiki/v2/spaces"
+        params = kwargs["params"]
+        calls.append(params.copy())
+        return {"code": 0, "data": pages[params.get("page_token")]}
+
+    def fake_nodes(token, space_id, parent, path, rows, problems, depth):
+        walked.append(space_id)
+
+    monkeypatch.setattr(fetch_lark_docs, "get", fake_get)
+    monkeypatch.setattr(fetch_lark_docs, "_wiki_nodes", fake_nodes)
+    monkeypatch.setattr(fetch_lark_docs.time, "sleep", lambda *_: None)
+    rows, problems = [], []
+
+    fetch_lark_docs.list_wiki("tok", rows, problems)
+
+    assert [params.get("page_token") for params in calls] == [None, "page2", "page3"]
+    assert [row["token"] for row in rows] == ["s1", "s2"]
+    assert walked == ["s1", "s2"]
+    assert problems == []
+
+
+@pytest.mark.parametrize("partial", [False, True], ids=["all_sources_failed", "partial_results"])
+def test_main_failed_rerun_preserves_complete_inventory(monkeypatch, tmp_dir, partial):
+    complete = tmp_dir / "cloud-docs-inventory-20261029.csv"
+    previous = b"previous successful inventory\noriginal row\n"
+    complete.write_bytes(previous)
+    rows = [{"类型": "文档", "token": "doc1", "名称": "partial"}] if partial else []
+    monkeypatch.setattr(sys, "argv", ["fetch_lark_docs.py", "--out", str(tmp_dir)])
+    monkeypatch.setattr(fetch_lark_docs.fl, "load_token", lambda: "tok")
+    monkeypatch.setattr(fetch_lark_docs, "collect", lambda *a, **kw: (rows, ["API unauthorized"]))
+    monkeypatch.setattr(fetch_lark_docs.time, "strftime", lambda _: "20261029")
+
+    with pytest.raises(SystemExit) as exc:
+        fetch_lark_docs.main()
+
+    assert exc.value.code == 1
+    assert complete.read_bytes() == previous
+    incomplete = tmp_dir / "cloud-docs-inventory-20261029-incomplete.csv"
+    with incomplete.open(encoding="utf-8-sig", newline="") as fh:
+        saved = list(csv.DictReader(fh))
+    assert [row["token"] for row in saved] == (["doc1"] if partial else [])
+
+
+def test_main_success_writes_complete_inventory(monkeypatch, tmp_dir):
+    rows = [{"类型": "文档", "token": "doc1", "名称": "complete"}]
+    monkeypatch.setattr(sys, "argv", ["fetch_lark_docs.py", "--out", str(tmp_dir)])
+    monkeypatch.setattr(fetch_lark_docs.fl, "load_token", lambda: "tok")
+    monkeypatch.setattr(fetch_lark_docs, "collect", lambda *a, **kw: (rows, []))
+    monkeypatch.setattr(fetch_lark_docs.time, "strftime", lambda _: "20261029")
+
+    assert fetch_lark_docs.main() is None
+
+    complete = tmp_dir / "cloud-docs-inventory-20261029.csv"
+    with complete.open(encoding="utf-8-sig", newline="") as fh:
+        saved = list(csv.DictReader(fh))
+    assert [row["token"] for row in saved] == ["doc1"]
+    assert not (tmp_dir / "cloud-docs-inventory-20261029-incomplete.csv").exists()

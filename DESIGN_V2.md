@@ -64,7 +64,7 @@ approved_by: 人工 2026-08-xx    # 规律进入计算前必须人批
 | --- | --- | --- |
 | L0 观察 | 只读+报告 | 每日头寸日报、异动告警（余额偏离计划>阈值） |
 | L1 提议 | 生成方案，人逐笔批 | 周度调拨建议、例外处置方案（2-3 个带代价的选项） |
-| L2 预备 | 人批后 Agent 执行到审批门 | 确认后自动调 Approval v4 preview→create（preview 失败绝不 create，沿用 cash-ops 红线） |
+| L2 预备 | 人批后 Agent 执行到审批门 | 确认后自动调 Approval v4 preview→create（preview 失败绝不 create，见 [排障与 Base 权限](docs/lark-approval-preview.md)） |
 | L3 有界自主 | 白名单内自动 | 远期：同名账户小额归集等零风险动作。初期不开。 |
 
 付款执行永远不给 Agent 工具——安全靠工具不存在，不靠 prompt。

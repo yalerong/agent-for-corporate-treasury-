@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """云文档盘点（只出清单，不拉内容）· 用户身份 = 当前授权用户可见范围。
 
 三条路合并去重：
@@ -14,6 +13,7 @@
   * 输出较多时 Windows 控制台会被块缓冲，本脚本对每条进度 print(flush=True)。
 
 产物：<out>/cloud-docs-inventory-<YYYYMMDD>.csv（来源,路径,名称,类型,token,URL,最后修改）
+有未完成部分时另存为 -incomplete.csv 并以状态码 1 退出，保留当天已有的完整清单。
 只读：不下载正文、不改权限、不分享、不发版。
 
 环境变量（.env）：
@@ -35,9 +35,8 @@ import re
 import time
 from pathlib import Path
 
-import requests
-
 import fetch_lark as fl  # 平铺脚本目录：cd cashflow 直跑时同目录可导入
+import requests
 
 BASE = fl.BASE
 WEB = os.environ.get("LARK_WEB_BASE", "").rstrip("/")
@@ -92,17 +91,29 @@ def post(path: str, token: str, payload: dict) -> dict:
 
 # ---------- 1) 知识库 ----------
 def list_wiki(tok: str, rows: list[dict], problems: list[str]) -> None:
-    d = get("/wiki/v2/spaces", tok, params={"page_size": 50})
-    if d.get("code") != 0:
-        problems.append(f"wiki 空间列表失败 code={d.get('code')} {str(d.get('msg'))[:40]}")
-        return
-    spaces = (d.get("data") or {}).get("items") or []
-    print(f"知识空间 {len(spaces)} 个", flush=True)
-    for sp in spaces:
-        sid, sname = sp.get("space_id"), sp.get("name")
-        rows.append({"来源": "wiki", "路径": sname, "名称": sname, "类型": "知识空间",
-                     "token": sid, "URL": doc_url("wiki", sid), "最后修改": ""})
-        _wiki_nodes(tok, sid, None, sname, rows, problems, depth=0)
+    page = None
+    count = 0
+    while True:
+        params: dict = {"page_size": 50}
+        if page:
+            params["page_token"] = page
+        d = get("/wiki/v2/spaces", tok, params=params)
+        if d.get("code") != 0:
+            problems.append(f"wiki 空间列表失败 code={d.get('code')} {str(d.get('msg'))[:40]}")
+            return
+        data = d.get("data") or {}
+        spaces = data.get("items") or []
+        count += len(spaces)
+        for sp in spaces:
+            sid, sname = sp.get("space_id"), sp.get("name")
+            rows.append({"来源": "wiki", "路径": sname, "名称": sname, "类型": "知识空间",
+                         "token": sid, "URL": doc_url("wiki", sid), "最后修改": ""})
+            _wiki_nodes(tok, sid, None, sname, rows, problems, depth=0)
+        if not data.get("has_more"):
+            print(f"知识空间 {count} 个", flush=True)
+            return
+        page = data.get("page_token")
+        time.sleep(0.15)
 
 
 def _wiki_nodes(tok: str, space_id: str, parent: str | None, path: str,
@@ -220,7 +231,8 @@ def main() -> None:
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    csv_path = out / f"cloud-docs-inventory-{time.strftime('%Y%m%d')}.csv"
+    suffix = "-incomplete" if problems else ""
+    csv_path = out / f"cloud-docs-inventory-{time.strftime('%Y%m%d')}{suffix}.csv"
     with csv_path.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=["来源", "路径", "名称", "类型", "token", "URL", "最后修改"])
         w.writeheader()
@@ -235,6 +247,7 @@ def main() -> None:
         print("\n⚠️ 未完成的部分（多半是权限没开，见 LARK_OAUTH_SCOPE）:")
         for p in sorted(set(problems))[:10]:
             print("  -", p)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
