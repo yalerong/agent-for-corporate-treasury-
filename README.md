@@ -172,7 +172,7 @@ docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要�
 
 向量库跑成独立的 `qdrant` 服务（`QDRANT_URL=http://qdrant:6333`），所以 API 在跑的时候也能直接 `docker compose run --rm app ...` 入库或提问；
 本地文件模式会独占数据目录，那种配置下两个进程只能活一个。知识库源文件走 `./knowledge_base` 绑定挂载，放进去即可；
-审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文排除了 Lark token 缓存与 cashflow 真实数据/规则文件（见 `.dockerignore`）。
+审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文是**白名单**（`.dockerignore` 先排除一切，只放行 `app/`、`eval/`、`examples/`、`requirements.txt`），所以本机目录里没进仓库的私有文件、你的知识库文档都不会被打进镜像。
 
 **当前状态**：compose 文件已用 `docker compose config` 校验，镜像尚未在干净机器上完整构建和跑通（依赖 torch，首次构建体积大）；本地模型的拉取与模型选择需要你按实际硬件定。
 
