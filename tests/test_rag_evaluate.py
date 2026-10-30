@@ -9,6 +9,7 @@ import pytest
 from qdrant_client import QdrantClient
 
 from app.rag import get_store
+from app.rag.access import active_filter
 from app.rag.evaluate import (
     REFUSAL_PHRASE,
     ROOT,
@@ -66,6 +67,19 @@ def test_score_answer_refusal_and_keywords():
     trap = Question(id="t", question="?", must_refuse=True, forbid_text=["800"])
     assert score_answer(trap, REFUSAL_PHRASE).passed
     assert not score_answer(trap, "每晚 800 元").passed               # 该拒答却作答
+
+
+def test_default_corpus_has_more_eligible_chunks_than_default_k(eval_store):
+    """默认 k 下评测必须有区分度：可检索块数要明显多于 k，来源检查才取决于排序。"""
+    eligible = eval_store.client.count(
+        eval_store.collection_name, count_filter=active_filter(ASOF), exact=True
+    ).count
+    assert eligible > 4 + 2
+
+
+def test_eval_refuses_to_run_when_k_covers_every_eligible_chunk(eval_store):
+    with pytest.raises(ValueError, match="没有区分度"):
+        run_eval(eval_store, load_questions(QFILE), asof=ASOF, k=500)
 
 
 def test_refusal_must_be_standalone_not_substring():
