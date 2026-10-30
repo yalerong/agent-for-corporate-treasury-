@@ -142,8 +142,9 @@ def index_track(track: Track) -> int:
 
     走 ingest 的内容哈希增量同步（重跑不产生重复块、删掉的文件会从索引移除），
     并带上文档元数据；没写元数据的文档按"待审"入库、检索不到。
+    同步被拒绝或还有文档失败时抛 IngestError——旧块虽然还留着，但那不是"刷新成功"。
     """
-    from app.rag.ingest import Manifest, sync_directory
+    from app.rag.ingest import IngestError, Manifest, sync_directory
 
     s = get_settings()
     path = s.industry_kb_path if track == "industry" else s.enterprise_kb_path
@@ -153,6 +154,8 @@ def index_track(track: Track) -> int:
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}")
+    if report.blocked or report.errors:
+        raise IngestError(report.summary())
     return sum(len(d["chunk_ids"]) for d in manifest.docs.values())
 
 

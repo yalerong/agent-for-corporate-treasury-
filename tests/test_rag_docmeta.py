@@ -218,3 +218,21 @@ class TestSyncWithMeta:
         (root / "b.md").write_text("---\ndoc_id: x\n---\n乙。", "utf-8")
         r, m = _sync(root, store, tmp_dir)
         assert "a.md" in m.docs and "b.md" not in m.docs and "已被" in r.errors["b.md"]
+
+    def test_doc_id_change_releases_old_reservation(self, root, store, tmp_dir):
+        (root / "a.md").write_text("---\nstatus: approved\ndoc_id: x\n---\n甲。", "utf-8")
+        _sync(root, store, tmp_dir)
+        # a.md 改用新 id，空出来的 x 同批次就该能给 b.md 用
+        (root / "a.md").write_text("---\nstatus: approved\ndoc_id: y\n---\n甲改。", "utf-8")
+        (root / "b.md").write_text("---\nstatus: approved\ndoc_id: x\n---\n乙。", "utf-8")
+        r, m = _sync(root, store, tmp_dir)
+        assert not r.errors and m.docs["b.md"]["meta"]["doc_id"] == "x"
+        assert m.docs["a.md"]["meta"]["doc_id"] == "y"
+
+    def test_non_utf8_sidecar_is_per_document_error(self, root, store, tmp_dir):
+        (root / "a.md").write_text("内容。", "utf-8")
+        (root / "a.md.meta.yaml").write_bytes("status: 已批准".encode("gb18030"))
+        (root / "b.md").write_text("内容。", "utf-8")
+        r, m = _sync(root, store, tmp_dir)
+        assert "读取失败" in r.errors["a.md"]
+        assert "b.md" in m.docs  # 一份坏掉不中断整批
