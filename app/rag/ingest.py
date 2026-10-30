@@ -12,6 +12,7 @@ source 是相对 root 的路径（不含 root 目录名），换机器、换挂�
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -352,6 +353,10 @@ def sync_directory(
         return report
     if store is None and not dry_run:
         raise ValueError("store 不能为空（只有 dry_run 可以不带）")
+    if dry_run:
+        # 预演在 manifest 副本上做：既要按"拟入库"的元数据算草稿/取代关系，
+        # 又不能污染调用方手里的 manifest
+        manifest = copy.deepcopy(manifest)
 
     if not dry_run:
         # manifest 只对它建账时的那个集合有效：换了集合名或集合被重建，"哈希没变就跳过"
@@ -401,7 +406,10 @@ def sync_directory(
 
     _upgrade_legacy_entries(manifest, report, dry_run)
 
-    claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in on_disk}
+    # 扫描不完整时 vanished 里的条目会原样保留，它们的 doc_id 也必须留着占坑，
+    # 否则可读目录里的新文档能把同一个 id 抢走，manifest 里出现两个同 id 文档
+    retained = manifest.docs.keys() if report.scan_errors else on_disk.keys()
+    claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in retained}
     for source, path in on_disk.items():
         old = manifest.docs.get(source)
         try:
@@ -428,6 +436,14 @@ def sync_directory(
         claimed[meta.doc_id] = source
         (report.changed if old else report.added).append(source)
         if dry_run:
+            # 预演也要用"拟入库"的元数据算草稿清单与取代关系，否则预览报不出元数据问题
+            manifest.docs[source] = {
+                "sha256": digest,
+                "chunk_ids": old["chunk_ids"] if old else [],
+                "indexed_at": "",
+                "meta": meta.to_dict(),
+                "superseded_on": NEVER,
+            }
             continue
         base = Document(
             page_content=text,

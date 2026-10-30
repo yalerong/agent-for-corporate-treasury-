@@ -180,7 +180,7 @@ def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None)
         bad = set(layer) - _DIR_FIELDS
         if bad:
             raise MetaError(
-                f"{f.relative_to(root).as_posix()} 含不允许的目录级字段或拼写错误: {sorted(bad)}"
+                f"{f.relative_to(root).as_posix()} 含不允许的目录级字段或拼写错误: {sorted(bad, key=str)}"
             )
         raw.update(layer)
 
@@ -194,7 +194,7 @@ def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None)
         own = _read_yaml_file(side, side.name)
     bad = set(own) - _DOC_FIELDS
     if bad:
-        raise MetaError(f"未知元数据字段（拼写错误？）: {sorted(bad)}")
+        raise MetaError(f"未知元数据字段（拼写错误？）: {sorted(bad, key=str)}")
     raw.update(own)
 
     doc_type = raw.get("doc_type", "policy")
