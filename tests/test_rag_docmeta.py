@@ -253,6 +253,46 @@ class TestSyncWithMeta:
         _sync(root, store, tmp_dir)
         assert _payloads(store)["r1.md"]["superseded_on"] == 0  # 删除：也不复活
 
+    def test_deleting_only_the_superseded_middle_ruling_does_not_break_later_syncs(
+        self, root, store, tmp_dir
+    ):
+        """R-003→R-002→R-001：只删中间的 R-002，R-003 对它的声明不能变成“找不到 doc_id”的错误。"""
+        (root / "r1.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n一代。", "utf-8")
+        r2 = root / "r2.md"
+        r2.write_text("---\nstatus: approved\ndoc_id: r2\nsupersedes: [r1]\n---\n二代。", "utf-8")
+        (root / "r3.md").write_text(
+            "---\nstatus: approved\ndoc_id: r3\nsupersedes: [r2]\n---\n三代。", "utf-8"
+        )
+        _sync(root, store, tmp_dir)
+        r2.unlink()
+        for _ in range(3):  # 删除当次、以及之后连续几次什么都没变的同步，都不该报错
+            r, m = _sync(root, store, tmp_dir)
+            assert not r.errors, r.errors
+            assert _payloads(store)["r1.md"]["superseded_on"] == 0   # 一代仍然退场
+            assert _payloads(store)["r3.md"]["superseded_on"] == NEVER
+        assert set(m.supersession) == {"r1", "r2"}                    # 两条关系台账里都还在
+
+    def test_deleting_earlier_of_two_superseders_keeps_the_earlier_cutoff(
+        self, root, store, tmp_dir
+    ):
+        """A(2026-01-01) 与 B(2027-01-01) 都取代 old：删掉较早的 A，old 不能在两个生效日之间复活。"""
+        (root / "old.md").write_text("---\nstatus: approved\ndoc_id: o\n---\n旧。", "utf-8")
+        a = root / "a.md"
+        a.write_text(
+            "---\nstatus: approved\ndoc_id: a\nsupersedes: [o]\neffective_from: 2026-01-01\n---\n甲。",
+            "utf-8",
+        )
+        (root / "b.md").write_text(
+            "---\nstatus: approved\ndoc_id: b\nsupersedes: [o]\neffective_from: 2027-01-01\n---\n乙。",
+            "utf-8",
+        )
+        _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 20260101
+        a.unlink()
+        _, m = _sync(root, store, tmp_dir)
+        assert _payloads(store)["old.md"]["superseded_on"] == 20260101  # 没有被推迟到 2027
+        assert m.supersession["o"]["on"] == 20260101
+
     def test_superseder_removing_the_claim_does_revoke(self, root, store, tmp_dir):
         """取代者还在、但把 supersedes 改掉，是明确撤销，旧文档恢复。"""
         (root / "old.md").write_text("---\nstatus: approved\ndoc_id: r1\n---\n旧。", "utf-8")

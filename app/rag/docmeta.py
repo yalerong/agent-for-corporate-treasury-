@@ -272,6 +272,12 @@ def resolve_supersession(docs: dict[str, dict], ledger: dict[str, dict] | None =
                 if old not in ledger:
                     missing.append((src, old))
                     warnings.append(f"{d['doc_id']} 声明取代 {old}，但知识库里没有这份文档")
+                elif d["status"] != "draft":
+                    # 被取代的那份是之后才被清理掉的（链条 R-003→R-002→R-001 里删中间的 R-002）：
+                    # 这条关系是以前确认过的，取代者还在声明，就继续记着，别当成写错的引用
+                    asserted[old] = min(
+                        asserted.get(old, (NEVER, "")), (_eff_int(d), d["doc_id"])
+                    )
                 continue
             if d["status"] == "draft":
                 continue
@@ -283,7 +289,12 @@ def resolve_supersession(docs: dict[str, dict], ledger: dict[str, dict] | None =
                 asserted[old] = (on, d["doc_id"])
     new_ledger = {old: {"by": by, "on": on} for old, (on, by) in asserted.items()}
     for old, entry in ledger.items():
-        if old not in new_ledger and entry["by"] not in by_id:
+        if entry["by"] in by_id:
+            continue  # 取代者还在：以它现在的声明为准（还声明就已在 asserted 里，不声明了就是撤销）
+        cur = new_ledger.get(old)
+        if cur is None or entry["on"] < cur["on"]:
+            # 取代者已被删除：它的历史声明要和现存声明合并取更早的生效日，
+            # 否则删掉较早的那份，旧文档会在两个生效日之间重新可检索
             new_ledger[old] = entry
             warnings.append(
                 f"{old} 曾被 {entry['by']} 取代，{entry['by']} 已不在知识库；取代关系继续保留"
