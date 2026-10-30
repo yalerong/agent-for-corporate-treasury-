@@ -235,36 +235,66 @@ def resolve_meta(
     )
 
 
-def compute_superseded_on(docs: dict[str, dict]) -> tuple[dict[str, int], list[str]]:
-    """docs: source → DocMeta.to_dict()。返回 (source → superseded_on, 警告)。
+@dataclass
+class Supersession:
+    """一次取代关系的解析结果。"""
 
-    superseded_on = 取代它的已批准文档中最早的生效日（YYYYMMDD）；没人取代 = NEVER。
-    检索侧要求 superseded_on > 今天，所以"新裁决尚未生效"时旧文档仍然算数。
-    只有 approved 的取代者才算（草稿不能把现行文档顶掉）；互相取代的对子视为矛盾，
-    两边都不生效取代关系并告警，交给人处理。
+    by_source: dict[str, int]    # 现有文档 source → superseded_on
+    by_doc_id: dict[str, int]    # doc_id → superseded_on（含台账里记着、但这份文档暂时不在库的）
+    ledger: dict[str, dict]      # 新台账：被取代 doc_id → {"by": 取代者 doc_id, "on": 生效日}
+    warnings: list[str]
+    missing: list[tuple[str, str]]  # (声明方 source, 找不到的 doc_id)
+
+
+def _eff_int(d: dict) -> int:
+    return to_int(date.fromisoformat(d["effective_from"])) if d["effective_from"] else 0
+
+
+def resolve_supersession(docs: dict[str, dict], ledger: dict[str, dict] | None = None) -> Supersession:
+    """docs: source → DocMeta.to_dict()；ledger: 上次留下的取代台账。
+
+    规则（目标：旧制度一旦被新裁决取代，就不会因为管理动作而悄悄“复活”）：
+    - 取代者是 approved 或 deprecated 都算数——新裁决后来被更新的裁决废止，是常规操作，
+      不该让两代以前的旧制度重新生效；draft（待审）不算
+    - 取代者**被删除**：台账保留这条关系并告警；要恢复旧文档用 --reinstate <doc_id>
+    - 取代者还在、但不再声明取代（被人改掉）或被降回 draft：视为明确撤销，台账去掉
+    - 互相取代的对子视为矛盾，都不生效并告警，交给人处理
+    - superseded_on = 取代者中最早的生效日；检索侧要求它 > 今天，所以新裁决尚未生效时旧文档仍算数
     """
-    by_id: dict[str, str] = {}
-    for src, d in docs.items():
-        by_id[d["doc_id"]] = src
+    ledger = ledger or {}
+    by_id = {d["doc_id"]: src for src, d in docs.items()}
     warnings: list[str] = []
-    edges: dict[str, set[str]] = {}  # 被取代 doc_id → {取代者 doc_id}
-    for d in docs.values():
+    missing: list[tuple[str, str]] = []
+    asserted: dict[str, tuple[int, str]] = {}
+    for src, d in docs.items():
         for old in d["supersedes"]:
             if old not in by_id:
-                warnings.append(f"{d['doc_id']} 声明取代 {old}，但知识库里没有这份文档")
+                if old not in ledger:
+                    missing.append((src, old))
+                    warnings.append(f"{d['doc_id']} 声明取代 {old}，但知识库里没有这份文档")
                 continue
-            edges.setdefault(old, set()).add(d["doc_id"])
-    result = {src: NEVER for src in docs}
-    for old, news in edges.items():
-        old_src = by_id[old]
-        for new in sorted(news):
-            new_d = docs[by_id[new]]
-            if new in docs[old_src]["supersedes"]:
-                warnings.append(f"{old} 与 {new} 互相声明取代，取代关系均不生效，请人工裁定")
+            if d["status"] == "draft":
                 continue
-            if new_d["status"] != "approved":
+            if d["doc_id"] in docs[by_id[old]]["supersedes"]:
+                warnings.append(f"{old} 与 {d['doc_id']} 互相声明取代，取代关系均不生效，请人工裁定")
                 continue
-            eff = to_int(date.fromisoformat(new_d["effective_from"])) if new_d[
-                "effective_from"] else 0
-            result[old_src] = min(result[old_src], eff)
-    return result, warnings
+            on = _eff_int(d)
+            if old not in asserted or on < asserted[old][0]:
+                asserted[old] = (on, d["doc_id"])
+    new_ledger = {old: {"by": by, "on": on} for old, (on, by) in asserted.items()}
+    for old, entry in ledger.items():
+        if old not in new_ledger and entry["by"] not in by_id:
+            new_ledger[old] = entry
+            warnings.append(
+                f"{old} 曾被 {entry['by']} 取代，{entry['by']} 已不在知识库；取代关系继续保留"
+                f"（确实要让 {old} 重新生效，请用 --reinstate {old}）"
+            )
+    by_doc_id = {old: e["on"] for old, e in new_ledger.items()}
+    by_source = {src: by_doc_id.get(d["doc_id"], NEVER) for src, d in docs.items()}
+    return Supersession(by_source, by_doc_id, new_ledger, warnings, missing)
+
+
+def compute_superseded_on(docs: dict[str, dict]) -> tuple[dict[str, int], list[str]]:
+    """无台账的简化入口：docs 为 source → DocMeta.to_dict()，返回 (source → superseded_on, 警告)。"""
+    r = resolve_supersession(docs)
+    return r.by_source, r.warnings
