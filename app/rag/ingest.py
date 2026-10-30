@@ -528,6 +528,9 @@ def sync_directory(
     for source in vanished:
         report.deleted.append(source)
         if dry_run:
+            # 在副本上去掉：后面的取代关系告警、待批准清单要按"同步后的语料"算，
+            # 否则已删文档还会占着 doc_id、挂在待批准清单里
+            del manifest.docs[source]
             continue
         _delete_source(store, source)
         _cleanup_migrated(store, manifest.docs[source])  # 迁移后一直没重建成功就被删：旧名字下的块也要清

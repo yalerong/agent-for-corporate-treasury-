@@ -23,6 +23,25 @@ def test_totp_secret_is_normalized_before_padding(monkeypatch):
     assert spaced == compact
 
 
+def test_build_auth_url_defaults_without_scope_param():
+    url = fetch_lark.build_auth_url("STATE-1")
+
+    assert url.startswith("https://accounts.larksuite.com/open-apis/authen/v1/authorize?")
+    assert "state=STATE-1" in url
+    assert "scope=" not in url
+
+
+def test_build_auth_url_encodes_space_separated_scope():
+    url = fetch_lark.build_auth_url("S", "drive:drive:readonly search:docs:read")
+
+    assert "&scope=drive%3Adrive%3Areadonly%20search%3Adocs%3Aread" in url
+    assert " " not in url
+
+
+def test_build_auth_url_blank_scope_is_absent():
+    assert "scope=" not in fetch_lark.build_auth_url("S", "   ")
+
+
 def test_lark_auth_host_matches_api_base():
     assert fetch_lark.auth_host_for_api_base("https://open.feishu.cn/open-apis") == (
         "https://accounts.feishu.cn"
