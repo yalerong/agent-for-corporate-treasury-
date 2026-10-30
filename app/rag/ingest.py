@@ -24,6 +24,15 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
+from app.rag.docmeta import (
+    NEVER,
+    DocMeta,
+    MetaError,
+    compute_superseded_on,
+    inputs_digest,
+    resolve_meta,
+    split_front_matter,
+)
 from app.rag.store import Track, chunk_documents
 
 SUPPORTED_SUFFIXES = (".md", ".txt", ".docx", ".pdf", ".xlsx", ".csv")
@@ -159,6 +168,8 @@ class SyncReport:
     unchanged: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    drafts: list[str] = field(default_factory=list)  # 已入库但非 approved：检索不到
+    warnings: list[str] = field(default_factory=list)
     blocked: str | None = None
     dry_run: bool = False
 
@@ -168,6 +179,13 @@ class SyncReport:
             f"{head}新增 {len(self.added)}｜改动 {len(self.changed)}｜"
             f"删除 {len(self.deleted)}｜未变 {len(self.unchanged)}｜失败 {len(self.errors)}"
         )
+        if self.drafts:
+            s += (
+                f"\n其中 {len(self.drafts)} 份尚未批准（status 不是 approved），检索不到；"
+                "在文档 front matter / .meta.yaml / _meta.yaml 里写 status: approved 后重跑"
+            )
+        for w in self.warnings:
+            s += f"\n警告: {w}"
         if self.blocked:
             s += f"\n已拒绝执行: {self.blocked}"
         return s
@@ -188,6 +206,38 @@ def scan_root(root: Path) -> dict[str, Path]:
 
 def _chunk_ids(source: str, sha: str, n: int) -> list[str]:
     return [str(uuid.uuid5(_NS, f"{source}#{sha}#{i}")) for i in range(n)]
+
+
+def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
+    """解析正文 + 元数据。文本类格式的 front matter 在这里拆掉，不进索引。"""
+    text = parse_file(path)
+    front = None
+    if path.suffix.lower() in (".md", ".txt"):
+        front, text = split_front_matter(text)
+        if not text.strip():
+            raise ParseError("去掉 front matter 后正文为空")
+    return resolve_meta(root, path, source, front), text
+
+
+def _refresh_superseded(store, manifest: Manifest, report: SyncReport, dry_run: bool) -> None:
+    """按全库已批准文档重算 superseded_on，只对变化的文档改块 payload。"""
+    computed, warnings = compute_superseded_on(
+        {src: d["meta"] for src, d in manifest.docs.items()}
+    )
+    report.warnings.extend(warnings)
+    for src, value in computed.items():
+        d = manifest.docs[src]
+        if d.get("superseded_on", NEVER) == value or dry_run:
+            continue
+        if d["chunk_ids"]:
+            store.client.set_payload(
+                store.collection_name,
+                payload={"superseded_on": value},
+                points=d["chunk_ids"],
+                key=store.METADATA_KEY,
+            )
+        d["superseded_on"] = value
+        manifest.save()
 
 
 def sync_directory(
@@ -220,21 +270,25 @@ def sync_directory(
         )
         return report
 
+    claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in on_disk}
     for source, path in on_disk.items():
-        sha = file_sha256(path)
+        digest = inputs_digest(root, path, file_sha256(path))
         old = manifest.docs.get(source)
-        if old and old["sha256"] == sha:
+        if old and old["sha256"] == digest:
             report.unchanged.append(source)
             continue
+        try:
+            meta, text = _load(root, path, source)
+            owner = claimed.get(meta.doc_id)
+            if owner is not None and owner != source:
+                raise MetaError(f"doc_id {meta.doc_id!r} 已被 {owner} 使用")
+        except (ParseError, MetaError) as e:
+            # 读不出或元数据非法：旧块原样保留（宁可旧，不可空/不可错放行），新文件不入库
+            report.errors[source] = str(e)
+            continue
+        claimed[meta.doc_id] = source
         (report.changed if old else report.added).append(source)
         if dry_run:
-            continue
-        try:
-            text = parse_file(path)
-        except ParseError as e:
-            # 解析失败不动旧块；新文件则不入库
-            (report.changed if old else report.added).pop()
-            report.errors[source] = str(e)
             continue
         base = Document(
             page_content=text,
@@ -242,11 +296,13 @@ def sync_directory(
                 "source": source,
                 "category": category,
                 "subcategory": path.parent.name,
-                "doc_sha": sha,
+                "doc_sha": digest,
+                "superseded_on": NEVER,
+                **meta.payload(),
             },
         )
         chunks = chunk_documents([base], chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        ids = _chunk_ids(source, sha, len(chunks))
+        ids = _chunk_ids(source, digest, len(chunks))
         now = datetime.now(UTC).isoformat(timespec="seconds")
         for i, c in enumerate(chunks):
             c.metadata["chunk_index"] = i
@@ -256,7 +312,10 @@ def sync_directory(
             stale = [i for i in old["chunk_ids"] if i not in set(ids)]
             if stale:
                 store.delete(ids=stale)
-        manifest.docs[source] = {"sha256": sha, "chunk_ids": ids, "indexed_at": now}
+        manifest.docs[source] = {
+            "sha256": digest, "chunk_ids": ids, "indexed_at": now,
+            "meta": meta.to_dict(), "superseded_on": NEVER,
+        }
         manifest.save()
 
     for source in vanished:
@@ -268,6 +327,11 @@ def sync_directory(
             store.delete(ids=ids)
         del manifest.docs[source]
         manifest.save()
+
+    _refresh_superseded(store, manifest, report, dry_run)
+    report.drafts = sorted(
+        src for src, d in manifest.docs.items() if d["meta"]["status"] != "approved"
+    )
     return report
 
 
@@ -291,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}", file=sys.stderr)
+    for src in report.drafts:
+        print(f"  · 待批准: {src}")
     return 1 if report.blocked or report.errors else 0
 
 
