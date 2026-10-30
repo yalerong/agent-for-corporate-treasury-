@@ -110,6 +110,20 @@ FastAPI 的 `/healthz` 保持公开；所有 `/api/v1/*` 端点要求 Bearer tok
 `API_CASHIER_TOKEN`、`API_SUPERVISOR_TOKEN`、`API_MANAGER_TOKEN`、`API_ADMIN_TOKEN`
 把 token 映射为角色，不再信任请求体自报角色；四项全部留空时 API 默认拒绝访问。
 
+### 知识库摄取（企业库增量同步）
+
+```bash
+python -m app.rag.ingest --track enterprise --root <语料目录> --dry-run   # 先对账看会动什么
+python -m app.rag.ingest --track enterprise --root <语料目录>
+```
+
+支持 `.md/.txt/.docx/.pdf/.xlsx/.csv`；按内容哈希只处理新增/改动/删除，源文件删了索引里的块一并删除；
+解析失败（损坏、加密、扫描件无文字层）保留旧块并报错；一次要删掉超过一半已入库文档时默认拒绝（`--force` 放行）。
+`--dry-run` 只读文件系统与 manifest，不加载模型、不碰向量库。
+如果集合里已有旧索引（`scripts.build_kb` 写的、没有 manifest）或 manifest 丢了，首次同步会拒绝执行；
+确认丢弃旧索引后加 `--force` 重建（先清空该集合，再按源文件全量入库）。
+真实语料放私有仓，不进本仓。
+
 ## 多智能体协作 demo（一条命令，无需任何 Key）
 
 把 DESIGN.md 的多智能体设计跑成看得见的东西：三个角色节点串成一条链，**每一条"会动钱"的建议都必须过审批 Gate**。
