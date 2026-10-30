@@ -219,18 +219,19 @@ def knowledge(
     k: int = Query(default=4, ge=1, le=20),
     _role: UserRole = _current_role,
 ) -> dict[str, list[dict[str, str]]]:
+    from app.rag.access import active_filter
     from app.tools.knowledge import _store  # internal singleton
 
     result: dict[str, list[dict[str, str]]] = {}
     if target in ("industry", "both"):
         result["industry"] = [
             {"source": d.metadata.get("source", "unknown"), "content": d.page_content}
-            for d in _store("industry").similarity_search(q, k=k)
+            for d in _store("industry").similarity_search(q, k=k, filter=active_filter())
         ]
     if target in ("enterprise", "both"):
         result["enterprise"] = [
             {"source": d.metadata.get("source", "unknown"), "content": d.page_content}
-            for d in _store("enterprise").similarity_search(q, k=k)
+            for d in _store("enterprise").similarity_search(q, k=k, filter=active_filter())
         ]
     return result
 

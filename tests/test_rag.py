@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import tempfile
+from pathlib import Path
 
 import pytest
 from langchain_core.documents import Document
@@ -13,9 +15,9 @@ from app.rag import (
     DualTrackRetriever,
     chunk_documents,
     get_store,
-    index_to_store,
     load_directory,
 )
+from app.rag.ingest import Manifest, sync_directory
 
 
 class DeterministicFakeEmbeddings(Embeddings):
@@ -113,13 +115,14 @@ class TestDualTrackRetrieval:
             client=in_memory_client,
             collection_name=f"test_enterprise{suffix}",
         )
-        n_i = index_to_store(
-            industry_store, project_root / "knowledge_base" / "industry", "industry"
-        )
-        n_e = index_to_store(
-            enterprise_store, project_root / "knowledge_base" / "enterprise", "enterprise"
-        )
-        assert n_i > 0 and n_e > 0
+        # 走摄取管线：stub 目录里的 _meta.yaml 把它们标成 approved，检索才查得到
+        mdir = Path(tempfile.mkdtemp(prefix="treasury_manifest_"))
+        for track, store in (("industry", industry_store), ("enterprise", enterprise_store)):
+            report = sync_directory(
+                project_root / "knowledge_base" / track, track, store,
+                Manifest(mdir / f"{track}.json"), source_prefix=f"{track}/",
+            )
+            assert report.added and not report.errors
         return DualTrackRetriever(industry_store, enterprise_store, k=2)
 
     def test_both_tracks_return_separated_results(

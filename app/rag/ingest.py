@@ -191,8 +191,8 @@ class SyncReport:
         return s
 
 
-def scan_root(root: Path) -> dict[str, Path]:
-    """root 下所有受支持文件 → {相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏目录。"""
+def scan_root(root: Path, prefix: str = "") -> dict[str, Path]:
+    """root 下所有受支持文件 → {prefix+相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏目录。"""
     found: dict[str, Path] = {}
     for f in sorted(root.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -200,7 +200,7 @@ def scan_root(root: Path) -> dict[str, Path]:
         rel = f.relative_to(root)
         if f.name.startswith("~$") or any(part.startswith(".") for part in rel.parts):
             continue
-        found[rel.as_posix()] = f
+        found[prefix + rel.as_posix()] = f
     return found
 
 
@@ -250,6 +250,7 @@ def sync_directory(
     force: bool = False,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    source_prefix: str = "",
 ) -> SyncReport:
     """把 root 与 manifest 对账，增量写入 store。返回逐文档的处理报告。"""
     report = SyncReport(dry_run=dry_run)
@@ -257,7 +258,7 @@ def sync_directory(
         report.blocked = f"root 不存在或不是目录: {root}"
         return report
 
-    on_disk = scan_root(root)
+    on_disk = scan_root(root, source_prefix)
     vanished = sorted(set(manifest.docs) - set(on_disk))
     if (
         manifest.docs
@@ -343,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="增量同步一个目录到知识库")
     p.add_argument("--track", choices=["industry", "enterprise"], required=True)
     p.add_argument("--root", type=Path, help="源目录；缺省用该 track 的配置路径")
+    p.add_argument("--source-prefix", help="加在每个 source 前的前缀；缺省用配置路径时为 <track>/")
     p.add_argument("--dry-run", action="store_true", help="只对账不写入")
     p.add_argument("--force", action="store_true", help="放行大批量删除")
     args = p.parse_args(argv)
@@ -351,7 +353,10 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root or (s.industry_kb_path if track == "industry" else s.enterprise_kb_path)
     manifest = Manifest(s.qdrant_path / f"manifest-{track}.json")
     store = get_store(track, get_embeddings())
-    report = sync_directory(root, track, store, manifest, dry_run=args.dry_run, force=args.force)
+    prefix = args.source_prefix if args.source_prefix is not None else ("" if args.root else f"{track}/")
+    report = sync_directory(
+        root, track, store, manifest, dry_run=args.dry_run, force=args.force, source_prefix=prefix
+    )
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}", file=sys.stderr)

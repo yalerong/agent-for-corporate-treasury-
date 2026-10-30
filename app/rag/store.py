@@ -21,6 +21,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 from app.config import get_settings
+from app.rag.access import active_filter
 
 Track = Literal["industry", "enterprise"]
 SearchTrack = Literal["industry", "enterprise", "both"]
@@ -137,11 +138,22 @@ def index_to_store(
 
 
 def index_track(track: Track) -> int:
-    """便捷入口：用默认配置（HF embeddings + Qdrant 本地）索引一整个 track。"""
+    """便捷入口：默认配置下把该 track 的目录增量同步进索引，返回该 track 现有总块数。
+
+    走 ingest 的内容哈希增量同步（重跑不产生重复块、删掉的文件会从索引移除），
+    并带上文档元数据；没写元数据的文档按"待审"入库、检索不到。
+    """
+    from app.rag.ingest import Manifest, sync_directory
+
     s = get_settings()
     path = s.industry_kb_path if track == "industry" else s.enterprise_kb_path
     store = get_store(track, embeddings=get_embeddings())
-    return index_to_store(store, path, category=track)
+    manifest = Manifest(s.qdrant_path / f"manifest-{track}.json")
+    report = sync_directory(path, track, store, manifest, source_prefix=f"{track}/")
+    print(report.summary())
+    for src, err in report.errors.items():
+        print(f"  ✗ {src}: {err}")
+    return sum(len(d["chunk_ids"]) for d in manifest.docs.values())
 
 
 class DualTrackRetriever:
@@ -160,7 +172,7 @@ class DualTrackRetriever:
     def search(self, query: str, track: SearchTrack = "both") -> dict[str, list[Document]]:
         result: dict[str, list[Document]] = {}
         if track in ("industry", "both"):
-            result["industry"] = self.industry.similarity_search(query, k=self.k)
+            result["industry"] = self.industry.similarity_search(query, k=self.k, filter=active_filter())
         if track in ("enterprise", "both"):
-            result["enterprise"] = self.enterprise.similarity_search(query, k=self.k)
+            result["enterprise"] = self.enterprise.similarity_search(query, k=self.k, filter=active_filter())
         return result
