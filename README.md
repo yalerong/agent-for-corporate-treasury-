@@ -124,6 +124,29 @@ python -m app.rag.ingest --track enterprise --root <语料目录>
 确认丢弃旧索引后加 `--force` 重建（先清空该集合，再按源文件全量入库）。
 真实语料放私有仓，不进本仓。
 
+#### 文档元数据：谁算数、谁能看（默认从严）
+
+不写任何元数据的文档会被入库，但**检索不到**（`status` 缺省 `draft`），且按最高密级（`restricted`）处理——必须有人明确批准、明确降级才生效。三种写法，后者覆盖前者：
+
+```yaml
+# 1) 目录默认：knowledge_base/enterprise/policies/_meta.yaml（对该目录及子目录生效）
+status: approved
+classification: internal      # public < internal < restricted
+owner: 财务部
+
+# 2) 单份文档：.md/.txt 开头的 front matter；其他格式写同目录 <文件名>.meta.yaml
+---
+doc_id: R-047                 # 缺省 = 相对路径；全库唯一
+title: 跨主体调拨裁决
+doc_type: ruling              # regulation | policy | ruling
+effective_from: 2026-10-01    # 不写 = 立即生效；effective_to 同理
+supersedes: [R-013]           # 取代旧文档：新文档生效日起，旧文档不再被检索
+entities: [A公司, B公司]
+---
+```
+
+写错（字段拼错、取值或日期不合法）→ 该文档整份**不入库**并报错，旧版本的块保留；只有已批准的文档才能取代别的文档，互相取代会告警且都不生效。检索侧按这些字段过滤、按角色限制可见密级见后续 PR。
+
 ## 多智能体协作 demo（一条命令，无需任何 Key）
 
 把 DESIGN.md 的多智能体设计跑成看得见的东西：三个角色节点串成一条链，**每一条"会动钱"的建议都必须过审批 Gate**。

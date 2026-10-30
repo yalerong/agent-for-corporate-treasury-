@@ -1,6 +1,7 @@
 """知识库摄取管线：解析、增量同步、删除对账、失败保旧、批量删除保险丝。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -235,6 +236,27 @@ class TestSync:
         assert sorted(m2.docs) == ["policies/fx.txt", "policies/transfer.md"]
         assert _count(store) == sum(len(d["chunk_ids"]) for d in m2.docs.values())
 
+    def test_legacy_manifest_entries_are_upgraded(self, corpus, store, tmp_dir):
+        _sync(corpus, store, tmp_dir)
+        n = _count(store)
+        path = tmp_dir / "m.json"
+        raw = json.loads(path.read_text("utf-8"))
+        for entry in raw["docs"].values():  # 上一版 manifest：没有 meta / superseded_on
+            entry.pop("meta")
+            entry.pop("superseded_on")
+        path.write_text(json.dumps(raw, ensure_ascii=False), "utf-8")
+
+        # dry-run 也要能读旧格式，不能 KeyError
+        dry, _ = _sync(corpus, store, tmp_dir, dry_run=True)
+        assert not dry.errors and sorted(dry.changed) == [
+            "policies/fx.txt", "policies/transfer.md"
+        ]
+
+        r, m = _sync(corpus, store, tmp_dir)
+        assert not r.errors and any("旧格式" in w for w in r.warnings)
+        assert all("meta" in d for d in m.docs.values())
+        assert _count(store) == n  # 旧块 ID 照样对齐、不产生重复
+
     def test_chunk_metadata_and_stable_ids(self, corpus, store, tmp_dir):
         _, m1 = _sync(corpus, store, tmp_dir)
         hit = store.similarity_search("跨主体调拨", k=1)[0]
@@ -248,3 +270,51 @@ class TestSync:
         # --force 重建：确定性 ID 不变 → 块数不变，不产生重复
         r2, _ = _sync(corpus, store, tmp_dir, force=True)
         assert not r2.blocked and _count(store) == n
+
+    def test_scan_error_keeps_id_reservations(self, corpus, store, tmp_dir, monkeypatch):
+        _sync(corpus, store, tmp_dir)
+        # 可读目录里放一份冒用不可读文档 doc_id 的新文档
+        (corpus / "copy.md").write_text("---\ndoc_id: policies/fx.txt\n---\n冒用。", "utf-8")
+        blocked_dir = corpus / "policies"
+        real_iterdir = Path.iterdir
+
+        def fake_iterdir(self):
+            if self == blocked_dir:
+                raise PermissionError(13, "Access denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+        r, m = _sync(corpus, store, tmp_dir)
+        assert r.scan_errors and "已被" in r.errors["copy.md"]
+        ids = [d["meta"]["doc_id"] for d in m.docs.values()]
+        assert len(ids) == len(set(ids))  # 不可读文档的 id 没被抢走
+
+    def test_dry_run_checks_proposed_metadata(self, corpus, store, tmp_dir):
+        # 预演也要按"拟入库"的元数据出草稿清单和取代关系告警，且不污染调用方的 manifest
+        (corpus / "draft.md").write_text("无元数据。", "utf-8")
+        (corpus / "new.md").write_text(
+            "---\nstatus: approved\ndoc_id: n2\nsupersedes: [ghost]\n---\n新制度。", "utf-8"
+        )
+        r, m = _sync(corpus, store, tmp_dir, dry_run=True)
+        assert "draft.md" in r.drafts
+        assert any("ghost" in w for w in r.warnings)
+        assert not m.docs and _count(store) == 0
+
+    def test_dry_run_drops_proposed_deletions_before_validation(self, corpus, store, tmp_dir):
+        # 已入库三份：old(approved, id=o1) / dr(草稿) / keep；之后 old、dr 被删，新增一份取代 o1
+        (corpus / "old.md").write_text("---\nstatus: approved\ndoc_id: o1\n---\n旧。", "utf-8")
+        (corpus / "dr.md").write_text("草稿，无元数据。", "utf-8")
+        (corpus / "keep.md").write_text("---\nstatus: approved\n---\n保留。", "utf-8")
+        _sync(corpus, store, tmp_dir)
+        (corpus / "old.md").unlink()
+        (corpus / "dr.md").unlink()
+        (corpus / "new.md").write_text(
+            "---\nstatus: approved\ndoc_id: n1\nsupersedes: [o1]\n---\n新。", "utf-8"
+        )
+        n = _count(store)
+        r, m = _sync(corpus, store, tmp_dir, dry_run=True)
+        assert sorted(r.deleted) == ["dr.md", "old.md"]
+        # o1 在同步后已不存在 → 与真实同步一样报“知识库里没有这份文档”
+        assert any("o1" in w for w in r.warnings)
+        assert "dr.md" not in r.drafts                      # 已删的草稿不再挂在待批准清单上
+        assert {"old.md", "dr.md"} <= set(m.docs) and _count(store) == n  # 调用方的 manifest 与库都没动

@@ -12,6 +12,7 @@ source 是相对 root 的路径（不含 root 目录名），换机器、换挂�
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -25,6 +26,15 @@ from pathlib import Path
 from langchain_core.documents import Document
 from qdrant_client.http import models as qm
 
+from app.rag.docmeta import (
+    NEVER,
+    DocMeta,
+    MetaError,
+    compute_superseded_on,
+    inputs_digest,
+    resolve_meta,
+    split_front_matter,
+)
 from app.rag.store import Track, chunk_documents
 
 SUPPORTED_SUFFIXES = (".md", ".txt", ".docx", ".pdf", ".xlsx", ".csv")
@@ -175,6 +185,7 @@ class SyncReport:
     deleted: list[str] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
     scan_errors: list[str] = field(default_factory=list)
+    drafts: list[str] = field(default_factory=list)  # 已入库但非 approved：检索不到
     warnings: list[str] = field(default_factory=list)
     blocked: str | None = None
     dry_run: bool = False
@@ -185,6 +196,11 @@ class SyncReport:
             f"{head}新增 {len(self.added)}｜改动 {len(self.changed)}｜"
             f"删除 {len(self.deleted)}｜未变 {len(self.unchanged)}｜失败 {len(self.errors)}"
         )
+        if self.drafts:
+            s += (
+                f"\n其中 {len(self.drafts)} 份尚未批准（status 不是 approved），检索不到；"
+                "在文档 front matter / .meta.yaml / _meta.yaml 里写 status: approved 后重跑"
+            )
         for w in self.warnings:
             s += f"\n提示: {w}"
         if self.scan_errors:
@@ -262,6 +278,60 @@ def _drop_all(store) -> int:
         deleted += len(points)
 
 
+def _upgrade_legacy_entries(
+    manifest: Manifest, report: SyncReport, dry_run: bool
+) -> None:
+    """把上一版 manifest（只有 sha256/chunk_ids/indexed_at）补成带 meta 的格式。
+
+    补的 meta 只是占位：sha256 清空 → 本轮回读元数据并按新格式重建块，
+    旧块 ID 保留在 entry 里，重建成功后按 stale 删除。
+    """
+    legacy = [src for src, d in manifest.docs.items() if "meta" not in d]
+    for src in legacy:
+        entry = manifest.docs[src]
+        entry["meta"] = DocMeta(doc_id=src).to_dict()
+        entry["sha256"] = ""
+        entry.setdefault("superseded_on", NEVER)
+    if legacy:
+        report.warnings.append(
+            f"manifest 里 {len(legacy)} 份旧格式条目缺元数据，已标记重新入库"
+        )
+        if not dry_run:
+            manifest.save()
+
+
+def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
+    """解析正文 + 元数据。文本类格式的 front matter 在这里拆掉，不进索引。"""
+    text = parse_file(path)
+    front = None
+    if path.suffix.lower() in (".md", ".txt"):
+        front, text = split_front_matter(text)
+        if not text.strip():
+            raise ParseError("去掉 front matter 后正文为空")
+    return resolve_meta(root, path, source, front), text
+
+
+def _refresh_superseded(store, manifest: Manifest, report: SyncReport, dry_run: bool) -> None:
+    """按全库已批准文档重算 superseded_on，只对变化的文档改块 payload。"""
+    computed, warnings = compute_superseded_on(
+        {src: d["meta"] for src, d in manifest.docs.items()}
+    )
+    report.warnings.extend(warnings)
+    for src, value in computed.items():
+        d = manifest.docs[src]
+        if d.get("superseded_on", NEVER) == value or dry_run:
+            continue
+        if d["chunk_ids"]:
+            store.client.set_payload(
+                store.collection_name,
+                payload={"superseded_on": value},
+                points=d["chunk_ids"],
+                key=store.METADATA_KEY,
+            )
+        d["superseded_on"] = value
+        manifest.save()
+
+
 def sync_directory(
     root: Path,
     category: str,
@@ -283,6 +353,10 @@ def sync_directory(
         return report
     if store is None and not dry_run:
         raise ValueError("store 不能为空（只有 dry_run 可以不带）")
+    if dry_run:
+        # 预演在 manifest 副本上做：既要按"拟入库"的元数据算草稿/取代关系，
+        # 又不能污染调用方手里的 manifest
+        manifest = copy.deepcopy(manifest)
 
     if not dry_run:
         # manifest 只对它建账时的那个集合有效：换了集合名或集合被重建，"哈希没变就跳过"
@@ -330,54 +404,87 @@ def sync_directory(
             removed = _drop_all(store)
             report.warnings.append(f"已清空 {removed} 个无 manifest 可对账的旧块，按源文件重建")
 
+    _upgrade_legacy_entries(manifest, report, dry_run)
+
+    # 扫描不完整时 vanished 里的条目会原样保留，它们的 doc_id 也必须留着占坑，
+    # 否则可读目录里的新文档能把同一个 id 抢走，manifest 里出现两个同 id 文档
+    retained = manifest.docs.keys() if report.scan_errors else on_disk.keys()
+    claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in retained}
     for source, path in on_disk.items():
         old = manifest.docs.get(source)
         try:
-            sha = file_sha256(path)
+            digest = inputs_digest(root, path, file_sha256(path))
         except OSError as e:
             # 单份读不了不影响其余文档；旧块与 manifest 原样保留，下次再试
             report.errors[source] = f"读取失败: {e.strerror or e}"
             continue
-        if old and old["sha256"] == sha:
+        if old and old["sha256"] == digest:
             report.unchanged.append(source)
             continue
-        if dry_run:
-            (report.changed if old else report.added).append(source)
-            continue
         try:
-            text = parse_file(path)
-        except ParseError as e:
-            # 解析失败不动旧块；新文件则不入库
+            meta, text = _load(root, path, source)
+            owner = claimed.get(meta.doc_id)
+            if owner is not None and owner != source:
+                raise MetaError(f"doc_id {meta.doc_id!r} 已被 {owner} 使用")
+        except (ParseError, MetaError) as e:
+            # 读不出或元数据非法：旧块原样保留（宁可旧，不可空/不可错放行），新文件不入库
             report.errors[source] = str(e)
             continue
+        if old and old["meta"]["doc_id"] != meta.doc_id:
+            # 换了 doc_id：旧 id 的占坑要释放，否则同批次里复用该 id 的文档会被误拒
+            claimed.pop(old["meta"]["doc_id"], None)
+        claimed[meta.doc_id] = source
         (report.changed if old else report.added).append(source)
+        if dry_run:
+            # 预演也要用"拟入库"的元数据算草稿清单与取代关系，否则预览报不出元数据问题
+            manifest.docs[source] = {
+                "sha256": digest,
+                "chunk_ids": old["chunk_ids"] if old else [],
+                "indexed_at": "",
+                "meta": meta.to_dict(),
+                "superseded_on": NEVER,
+            }
+            continue
         base = Document(
             page_content=text,
             metadata={
                 "source": source,
                 "category": category,
                 "subcategory": path.parent.name,
-                "doc_sha": sha,
+                "doc_sha": digest,
+                "superseded_on": NEVER,
+                **meta.payload(),
             },
         )
         chunks = chunk_documents([base], chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        ids = _chunk_ids(source, sha, len(chunks))
+        ids = _chunk_ids(source, digest, len(chunks))
         now = datetime.now(UTC).isoformat(timespec="seconds")
         for i, c in enumerate(chunks):
             c.metadata["chunk_index"] = i
             c.metadata["indexed_at"] = now
         store.add_documents(chunks, ids=ids)  # 先写新块，再删旧块：中途失败只会多不会缺
-        _delete_source(store, source, keep_sha=sha)  # 按 source 清旧版，中断残留下次也能清
-        manifest.docs[source] = {"sha256": sha, "chunk_ids": ids, "indexed_at": now}
+        _delete_source(store, source, keep_sha=digest)  # 按 source 清旧版，中断残留下次也能清
+        manifest.docs[source] = {
+            "sha256": digest, "chunk_ids": ids, "indexed_at": now,
+            "meta": meta.to_dict(), "superseded_on": NEVER,
+        }
         manifest.save()
 
     for source in vanished:
         report.deleted.append(source)
         if dry_run:
+            # 在副本上去掉：后面的取代关系告警、待批准清单要按"同步后的语料"算，
+            # 否则已删文档还会占着 doc_id、挂在待批准清单里
+            del manifest.docs[source]
             continue
         _delete_source(store, source)
         del manifest.docs[source]
         manifest.save()
+
+    _refresh_superseded(store, manifest, report, dry_run)
+    report.drafts = sorted(
+        src for src, d in manifest.docs.items() if d["meta"]["status"] != "approved"
+    )
     return report
 
 
@@ -401,6 +508,8 @@ def main(argv: list[str] | None = None) -> int:
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}", file=sys.stderr)
+    for src in report.drafts:
+        print(f"  · 待批准: {src}")
     return 1 if report.blocked or report.errors else 0
 
 
