@@ -46,6 +46,10 @@ class ParseError(Exception):
     """文件读不出可用文本（损坏、加密、扫描件无文字层等）。"""
 
 
+class IngestError(RuntimeError):
+    """整批同步没有干净完成（被拒绝执行或有文档失败），调用方不能当成功处理。"""
+
+
 def _read_text(path: Path) -> str:
     raw = path.read_bytes()
     for enc in ("utf-8-sig", "gb18030"):
@@ -213,8 +217,10 @@ class SyncReport:
         return s
 
 
-def scan_root(root: Path, errors: list[str] | None = None) -> dict[str, Path]:
-    """root 下所有受支持文件 → {相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏条目。
+def scan_root(
+    root: Path, prefix: str = "", errors: list[str] | None = None
+) -> dict[str, Path]:
+    """root 下所有受支持文件 → {prefix+相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏条目。
 
     传了 errors 时，读不了的目录记进 errors 并继续（调用方据此拒绝做删除对账）；
     不传则沿用旧行为：目录读不了直接抛 OSError。
@@ -237,7 +243,7 @@ def scan_root(root: Path, errors: list[str] | None = None) -> dict[str, Path]:
                 if not entry.is_symlink():
                     walk(entry)
             elif not entry.name.startswith("~$") and entry.suffix.lower() in SUPPORTED_SUFFIXES:
-                found[entry.relative_to(root).as_posix()] = entry
+                found[prefix + entry.relative_to(root).as_posix()] = entry
 
     walk(root)
     return found
@@ -265,6 +271,13 @@ def _delete_source(store, source: str, keep_sha: str | None = None) -> None:
     )
 
 
+def _cleanup_migrated(store, old: dict | None) -> None:
+    """source 改名迁移成功后，把旧名字下的块清掉（幂等，记号随新 entry 一起消失）。"""
+    old_source = (old or {}).pop("migrated_from", None)
+    if old_source:
+        _delete_source(store, old_source)
+
+
 def _drop_all(store) -> int:
     """清空集合里所有块（显式重建用：没有 manifest 时无法逐块对账）。"""
     deleted = 0
@@ -276,6 +289,42 @@ def _drop_all(store) -> int:
             return deleted
         store.delete(ids=[str(p.id) for p in points])
         deleted += len(points)
+
+
+def _migrate_source_prefix(
+    manifest: Manifest,
+    on_disk: dict[str, Path],
+    prefix: str,
+    report: SyncReport,
+    dry_run: bool,
+) -> None:
+    """旧 manifest 的 source 不带 `<track>/` 前缀时，按前缀迁一次，而不是当成文档消失。
+
+    迁移后 sha256 清空 → 本轮按新 source 重建块（块 ID 含 source），旧块 ID 先留着，
+    重建成功后按 stale 删掉；引用它的 doc_id 仍指向同一份文档，不会重复占坑。
+    """
+    if not prefix:
+        return
+    moved = 0
+    for source in [s for s in manifest.docs if s not in on_disk]:
+        new_source = prefix + source
+        if new_source not in on_disk or new_source in manifest.docs:
+            continue
+        entry = manifest.docs.pop(source)
+        entry["sha256"] = ""
+        entry["migrated_from"] = source  # 重建成功后按旧名字清理块
+        if entry.get("meta", {}).get("doc_id") == source:
+            # 没显式写 doc_id 的文档，id 原本就是旧 source；改名后若按新 source 重新推导，
+            # 别的文档 supersedes: [旧 source] 的引用就断了，被取代的旧制度会重新可检索
+            entry["pinned_doc_id"] = True
+        manifest.docs[new_source] = entry
+        moved += 1
+    if moved:
+        report.warnings.append(
+            f"manifest 里 {moved} 份文档的 source 补上 {prefix} 前缀，本轮重新入库"
+        )
+        if not dry_run:
+            manifest.save()
 
 
 def _upgrade_legacy_entries(
@@ -300,7 +349,9 @@ def _upgrade_legacy_entries(
             manifest.save()
 
 
-def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
+def _load(
+    root: Path, path: Path, source: str, default_doc_id: str | None = None
+) -> tuple[DocMeta, str]:
     """解析正文 + 元数据。文本类格式的 front matter 在这里拆掉，不进索引。"""
     text = parse_file(path)
     front = None
@@ -308,7 +359,7 @@ def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
         front, text = split_front_matter(text)
         if not text.strip():
             raise ParseError("去掉 front matter 后正文为空")
-    return resolve_meta(root, path, source, front), text
+    return resolve_meta(root, path, source, front, default_doc_id), text
 
 
 def _refresh_superseded(store, manifest: Manifest, report: SyncReport, dry_run: bool) -> None:
@@ -342,6 +393,7 @@ def sync_directory(
     force: bool = False,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    source_prefix: str = "",
 ) -> SyncReport:
     """把 root 与 manifest 对账，增量写入 store。返回逐文档的处理报告。
 
@@ -375,7 +427,9 @@ def sync_directory(
             return report
         manifest.collection = store.collection_name
 
-    on_disk = scan_root(root, errors=report.scan_errors)
+    on_disk = scan_root(root, source_prefix, errors=report.scan_errors)
+    _upgrade_legacy_entries(manifest, report, dry_run)
+    _migrate_source_prefix(manifest, on_disk, source_prefix, report, dry_run)
     # 目录读不全时，"文件没了" 可能只是看不见：宁可不对账，也绝不删错
     vanished = [] if report.scan_errors else sorted(set(manifest.docs) - set(on_disk))
     if (
@@ -404,8 +458,6 @@ def sync_directory(
             removed = _drop_all(store)
             report.warnings.append(f"已清空 {removed} 个无 manifest 可对账的旧块，按源文件重建")
 
-    _upgrade_legacy_entries(manifest, report, dry_run)
-
     # 扫描不完整时 vanished 里的条目会原样保留，它们的 doc_id 也必须留着占坑，
     # 否则可读目录里的新文档能把同一个 id 抢走，manifest 里出现两个同 id 文档
     retained = manifest.docs.keys() if report.scan_errors else on_disk.keys()
@@ -422,7 +474,8 @@ def sync_directory(
             report.unchanged.append(source)
             continue
         try:
-            meta, text = _load(root, path, source)
+            pinned = bool(old and old.get("pinned_doc_id"))
+            meta, text = _load(root, path, source, old["meta"]["doc_id"] if pinned else None)
             owner = claimed.get(meta.doc_id)
             if owner is not None and owner != source:
                 raise MetaError(f"doc_id {meta.doc_id!r} 已被 {owner} 使用")
@@ -464,9 +517,11 @@ def sync_directory(
             c.metadata["indexed_at"] = now
         store.add_documents(chunks, ids=ids)  # 先写新块，再删旧块：中途失败只会多不会缺
         _delete_source(store, source, keep_sha=digest)  # 按 source 清旧版，中断残留下次也能清
+        _cleanup_migrated(store, old)  # 改过 source 的：旧名字下的块一并清掉
         manifest.docs[source] = {
             "sha256": digest, "chunk_ids": ids, "indexed_at": now,
             "meta": meta.to_dict(), "superseded_on": NEVER,
+            **({"pinned_doc_id": True} if pinned else {}),
         }
         manifest.save()
 
@@ -478,6 +533,7 @@ def sync_directory(
             del manifest.docs[source]
             continue
         _delete_source(store, source)
+        _cleanup_migrated(store, manifest.docs[source])  # 迁移后一直没重建成功就被删：旧名字下的块也要清
         del manifest.docs[source]
         manifest.save()
 
@@ -496,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="增量同步一个目录到知识库")
     p.add_argument("--track", choices=["industry", "enterprise"], required=True)
     p.add_argument("--root", type=Path, help="源目录；缺省用该 track 的配置路径")
+    p.add_argument("--source-prefix", help="加在每个 source 前的前缀；缺省用配置路径时为 <track>/")
     p.add_argument("--dry-run", action="store_true", help="只对账不写入（不加载模型、不碰向量库）")
     p.add_argument("--force", action="store_true", help="放行大批量删除，或重建无 manifest 的旧索引")
     args = p.parse_args(argv)
@@ -504,7 +561,10 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root or (s.industry_kb_path if track == "industry" else s.enterprise_kb_path)
     manifest = Manifest(s.qdrant_path / f"manifest-{track}.json")
     store = None if args.dry_run else get_store(track, get_embeddings())
-    report = sync_directory(root, track, store, manifest, dry_run=args.dry_run, force=args.force)
+    prefix = args.source_prefix if args.source_prefix is not None else ("" if args.root else f"{track}/")
+    report = sync_directory(
+        root, track, store, manifest, dry_run=args.dry_run, force=args.force, source_prefix=prefix
+    )
     print(report.summary())
     for src, err in report.errors.items():
         print(f"  ✗ {src}: {err}", file=sys.stderr)

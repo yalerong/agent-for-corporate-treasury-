@@ -9,7 +9,8 @@ from langchain_core.embeddings import Embeddings
 from qdrant_client import QdrantClient
 
 from app.config import get_settings
-from app.rag.store import get_store, index_to_store
+from app.rag.ingest import Manifest, sync_directory
+from app.rag.store import get_store
 from app.tools import knowledge as knowledge_module
 from app.tools.knowledge import (
     reset_stores,
@@ -55,8 +56,11 @@ def populated_stores(monkeypatch, project_root, tmp_dir):
     client = QdrantClient(location=":memory:")
     industry = get_store("industry", embeddings, client, "test_industry")
     enterprise = get_store("enterprise", embeddings, client, "test_enterprise")
-    index_to_store(industry, project_root / "knowledge_base" / "industry", "industry")
-    index_to_store(enterprise, project_root / "knowledge_base" / "enterprise", "enterprise")
+    for track, store in (("industry", industry), ("enterprise", enterprise)):
+        sync_directory(
+            project_root / "knowledge_base" / track, track, store,
+            Manifest(tmp_dir / f"manifest-{track}.json"), source_prefix=f"{track}/",
+        )
     knowledge_module._stores["industry"] = industry
     knowledge_module._stores["enterprise"] = enterprise
     yield tmp_dir

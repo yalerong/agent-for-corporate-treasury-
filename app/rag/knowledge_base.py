@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from app.rag.ingest import IngestError
 from app.rag.store import index_track
 
 
@@ -26,12 +27,16 @@ def main(argv: list[str] | None = None) -> int:
         print("error: --industry-only 与 --enterprise-only 互斥", file=sys.stderr)
         return 2
 
-    if not args.enterprise_only:
-        n = index_track("industry")
-        print(f"[industry] indexed {n} chunks")
-    if not args.industry_only:
-        n = index_track("enterprise")
-        print(f"[enterprise] indexed {n} chunks")
+    try:
+        if not args.enterprise_only:
+            n = index_track("industry")
+            print(f"[industry] indexed {n} chunks")
+        if not args.industry_only:
+            n = index_track("enterprise")
+            print(f"[enterprise] indexed {n} chunks")
+    except IngestError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     return 0
 
 

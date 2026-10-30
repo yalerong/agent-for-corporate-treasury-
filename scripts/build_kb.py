@@ -16,6 +16,7 @@ import sys
 import time
 
 from app.config import get_settings
+from app.rag.ingest import IngestError
 from app.rag.store import index_track, load_directory
 
 
@@ -35,7 +36,11 @@ def _build(track_arg: str) -> int:
     for track in tracks:
         print(f"[build] 开始索引 {track}（首次会下载 BGE 模型）...", flush=True)
         t0 = time.time()
-        n = index_track(track)
+        try:
+            n = index_track(track)
+        except IngestError as e:
+            print(f"[build] {track} 失败: {e}", file=sys.stderr)
+            return 1
         elapsed = time.time() - t0
         print(f"[build] {track} 完成: {n} chunks, 耗时 {elapsed:.1f}s")
         total += n

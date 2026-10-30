@@ -172,7 +172,13 @@ def inputs_digest(root: Path, path: Path, file_sha: str) -> str:
     return h.hexdigest()
 
 
-def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None) -> DocMeta:
+def resolve_meta(
+    root: Path,
+    path: Path,
+    source: str,
+    front_matter: dict | None,
+    default_doc_id: str | None = None,
+) -> DocMeta:
     """合并三层元数据并校验。front_matter 由调用方在解析正文时一并取出。"""
     raw: dict = {}
     for f in _dir_meta_files(root, path):
@@ -210,7 +216,7 @@ def resolve_meta(root: Path, path: Path, source: str, front_matter: dict | None)
     if eff_from and eff_to and eff_to < eff_from:
         raise MetaError("effective_to 早于 effective_from")
 
-    doc_id = raw.get("doc_id") or source
+    doc_id = raw.get("doc_id") or default_doc_id or source
     if not isinstance(doc_id, str) or not doc_id.strip():
         raise MetaError("doc_id 应为非空字符串")
     owner = raw.get("owner")

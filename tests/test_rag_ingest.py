@@ -257,6 +257,20 @@ class TestSync:
         assert all("meta" in d for d in m.docs.values())
         assert _count(store) == n  # 旧块 ID 照样对齐、不产生重复
 
+    def test_source_prefix_migration_keeps_existing_docs(self, corpus, store, tmp_dir):
+        # 老 manifest 的 source 不带 track 前缀；换成带前缀的命名空间时不能当成"文档全没了"
+        _sync(corpus, store, tmp_dir)
+        n = _count(store)
+        r, m = _sync(corpus, store, tmp_dir, source_prefix="enterprise/")
+        assert not r.blocked and not r.deleted and not r.errors
+        assert sorted(m.docs) == [
+            "enterprise/policies/fx.txt", "enterprise/policies/transfer.md"
+        ]
+        assert any("前缀" in w for w in r.warnings)
+        assert _count(store) == n  # 旧块按 source 重建后删掉，不残留也不重复
+        sources = {h.metadata["source"] for h in store.similarity_search("调拨", k=10)}
+        assert sources == {"enterprise/policies/fx.txt", "enterprise/policies/transfer.md"}
+
     def test_chunk_metadata_and_stable_ids(self, corpus, store, tmp_dir):
         _, m1 = _sync(corpus, store, tmp_dir)
         hit = store.similarity_search("跨主体调拨", k=1)[0]
@@ -318,3 +332,25 @@ class TestSync:
         assert any("o1" in w for w in r.warnings)
         assert "dr.md" not in r.drafts                      # 已删的草稿不再挂在待批准清单上
         assert {"old.md", "dr.md"} <= set(m.docs) and _count(store) == n  # 调用方的 manifest 与库都没动
+
+
+def test_index_track_propagates_failure(monkeypatch, tmp_dir):
+    """批量入口不能把"某份文档失败/整批被拒"当成刷新成功。"""
+    from app.rag import store as store_module
+    from app.rag.ingest import IngestError
+
+    bad = tmp_dir / "kb"
+    (bad / "policies").mkdir(parents=True)
+    (bad / "policies" / "x.md").write_text("---\nstaus: approved\n---\n正文。", "utf-8")
+    fake_store = get_store(
+        "enterprise", DeterministicFakeEmbeddings(),
+        client=QdrantClient(location=":memory:"), collection_name="t_track",
+    )
+    monkeypatch.setattr(store_module, "get_embeddings", lambda: DeterministicFakeEmbeddings())
+    monkeypatch.setattr(store_module, "get_store", lambda track, embeddings: fake_store)
+    settings = store_module.get_settings()
+    monkeypatch.setattr(settings, "enterprise_kb_path", bad)
+    monkeypatch.setattr(settings, "qdrant_path", tmp_dir / "qd")
+
+    with pytest.raises(IngestError):
+        store_module.index_track("enterprise")

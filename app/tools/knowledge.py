@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from langchain_core.documents import Document
 from langchain_core.tools import tool
 
+from app.rag.access import active_filter
 from app.rag.store import get_embeddings, get_store
 from app.tools.audit import audit
 
@@ -61,7 +62,9 @@ def search_industry_knowledge(query: str, k: int = 4) -> str:
         拼接的多段文本，每段前缀 `[i] [source: 文件路径]` 便于回溯。
         无结果时返回 "(no results)"。
     """
-    docs = _store("industry").similarity_search(query, k=k)  # type: ignore[union-attr]
+    docs = _store("industry").similarity_search(  # type: ignore[union-attr]
+        query, k=k, filter=active_filter()
+    )
     return _format(docs)
 
 
@@ -80,5 +83,7 @@ def search_enterprise_knowledge(query: str, k: int = 4) -> str:
     Returns:
         拼接的多段文本，格式同 search_industry_knowledge。
     """
-    docs = _store("enterprise").similarity_search(query, k=k)  # type: ignore[union-attr]
+    docs = _store("enterprise").similarity_search(  # type: ignore[union-attr]
+        query, k=k, filter=active_filter()
+    )
     return _format(docs)
