@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+qdrant_data
+logs
+_site
+cashflow/data
+cashflow/runs
+cashflow/patterns

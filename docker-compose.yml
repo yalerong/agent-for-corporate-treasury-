@@ -1,0 +1,36 @@
+# 一条命令起问答服务：  docker compose up -d
+# 想要完全本地的模型（数据不出机器）：  docker compose --profile local-llm up -d
+#   然后拉一个模型：  docker compose exec ollama ollama pull qwen2.5:7b
+#   并在 .env 里设  LLM_BASE_URL=http://ollama:11434/v1  LLM_MODEL=qwen2.5:7b  LLM_API_KEY=ollama
+#
+# 放文档、入库（把 .md/.txt/.docx/.pdf/.xlsx 放进 ./knowledge_base/enterprise/ 下）：
+#   docker compose run --rm app python -m app.rag.ingest --track enterprise --dry-run
+#   docker compose run --rm app python -m app.rag.ingest --track enterprise
+# 提问：
+#   docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要谁审批？"
+services:
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      QDRANT_PATH: /data/qdrant
+      HF_HOME: /data/hf_cache
+    ports:
+      - "127.0.0.1:8000:8000"   # 只监听本机；要对内网开放请自己加反向代理和访问控制
+    volumes:
+      - ./knowledge_base:/app/knowledge_base
+      - app_data:/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  ollama_models:
