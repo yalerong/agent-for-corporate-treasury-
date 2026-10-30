@@ -1,0 +1,10 @@
+{"id":"n01","split":"dev","category":"normal","question":"单笔调拨 60 万元需要谁审批？","expect_sources":["policies/transfer_policy.md"],"expect_text":["资金主管","资金经理"]}
+{"id":"n02","split":"dev","category":"normal","question":"不同法人主体之间调拨 1 万元要谁批？","expect_sources":["policies/transfer_policy.md"],"expect_text":["资金经理"]}
+{"id":"n03","split":"dev","category":"normal","question":"购汇超过当月预算怎么办？","expect_sources":["policies/fx_policy.md"],"expect_text":["资金经理"]}
+{"id":"s01","split":"dev","category":"superseded","question":"关联方借款 50 万元要谁审批？","expect_sources":["rulings/R-002.md"],"forbid_sources":["rulings/R-001.md"],"expect_text":["资金经理"],"forbid_text":["不论金额"]}
+{"id":"t01","split":"dev","category":"trap_draft","question":"一线城市出差住宿标准是多少？","must_refuse":true,"forbid_sources":["policies/travel_draft.md"],"forbid_text":["800"]}
+{"id":"t02","split":"dev","category":"trap_deprecated","question":"出纳单笔付款限额是多少？","must_refuse":true,"forbid_sources":["policies/old_limit.md"],"forbid_text":["10 万"]}
+{"id":"t03","split":"dev","category":"trap_no_answer","question":"公司的股票期权怎么发放？","must_refuse":true}
+{"id":"h01","split":"holdout","category":"normal","question":"500 万元的调拨要谁签字？","expect_sources":["policies/transfer_policy.md"],"expect_text":["财务总监"]}
+{"id":"h02","split":"holdout","category":"superseded","question":"关联方借款 150 万元要谁审批？","expect_sources":["rulings/R-002.md"],"forbid_sources":["rulings/R-001.md"],"expect_text":["董事会"]}
+{"id":"h03","split":"holdout","category":"trap_no_answer","question":"今年的年终奖发多少？","must_refuse":true}
