@@ -168,6 +168,7 @@ class SyncReport:
     unchanged: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    scan_errors: list[str] = field(default_factory=list)
     drafts: list[str] = field(default_factory=list)  # 已入库但非 approved：检索不到
     warnings: list[str] = field(default_factory=list)
     blocked: str | None = None
@@ -185,27 +186,84 @@ class SyncReport:
                 "在文档 front matter / .meta.yaml / _meta.yaml 里写 status: approved 后重跑"
             )
         for w in self.warnings:
-            s += f"\n警告: {w}"
+            s += f"\n提示: {w}"
+        if self.scan_errors:
+            s += (
+                f"\n扫描不完整（{len(self.scan_errors)} 个目录读不了），"
+                "已跳过删除对账: " + "；".join(self.scan_errors)
+            )
         if self.blocked:
             s += f"\n已拒绝执行: {self.blocked}"
         return s
 
 
-def scan_root(root: Path) -> dict[str, Path]:
-    """root 下所有受支持文件 → {相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏目录。"""
+def scan_root(root: Path, errors: list[str] | None = None) -> dict[str, Path]:
+    """root 下所有受支持文件 → {相对路径(posix): 绝对路径}。跳过 ~$ 临时文件与隐藏条目。
+
+    传了 errors 时，读不了的目录记进 errors 并继续（调用方据此拒绝做删除对账）；
+    不传则沿用旧行为：目录读不了直接抛 OSError。
+    """
     found: dict[str, Path] = {}
-    for f in sorted(root.rglob("*")):
-        if not f.is_file() or f.suffix.lower() not in SUPPORTED_SUFFIXES:
-            continue
-        rel = f.relative_to(root)
-        if f.name.startswith("~$") or any(part.startswith(".") for part in rel.parts):
-            continue
-        found[rel.as_posix()] = f
+
+    def walk(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError as e:
+            if errors is None:
+                raise
+            errors.append(f"{directory}: {e.strerror or e}")
+            return
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                # 符号链接目录不跟，避免环
+                if not entry.is_symlink():
+                    walk(entry)
+            elif not entry.name.startswith("~$") and entry.suffix.lower() in SUPPORTED_SUFFIXES:
+                found[entry.relative_to(root).as_posix()] = entry
+
+    walk(root)
     return found
 
 
 def _chunk_ids(source: str, sha: str, n: int) -> list[str]:
     return [str(uuid.uuid5(_NS, f"{source}#{sha}#{i}")) for i in range(n)]
+
+
+def _drop_all(store) -> int:
+    """清空集合里所有块（显式重建用：没有 manifest 时无法逐块对账）。"""
+    deleted = 0
+    while True:
+        points, _ = store.client.scroll(
+            store.collection_name, limit=256, with_payload=False, with_vectors=False
+        )
+        if not points:
+            return deleted
+        store.delete(ids=[str(p.id) for p in points])
+        deleted += len(points)
+
+
+def _upgrade_legacy_entries(
+    manifest: Manifest, report: SyncReport, dry_run: bool
+) -> None:
+    """把上一版 manifest（只有 sha256/chunk_ids/indexed_at）补成带 meta 的格式。
+
+    补的 meta 只是占位：sha256 清空 → 本轮回读元数据并按新格式重建块，
+    旧块 ID 保留在 entry 里，重建成功后按 stale 删除。
+    """
+    legacy = [src for src, d in manifest.docs.items() if "meta" not in d]
+    for src in legacy:
+        entry = manifest.docs[src]
+        entry["meta"] = DocMeta(doc_id=src).to_dict()
+        entry["sha256"] = ""
+        entry.setdefault("superseded_on", NEVER)
+    if legacy:
+        report.warnings.append(
+            f"manifest 里 {len(legacy)} 份旧格式条目缺元数据，已标记重新入库"
+        )
+        if not dry_run:
+            manifest.save()
 
 
 def _load(root: Path, path: Path, source: str) -> tuple[DocMeta, str]:
@@ -251,16 +309,23 @@ def sync_directory(
     chunk_size: int = 500,
     chunk_overlap: int = 50,
 ) -> SyncReport:
-    """把 root 与 manifest 对账，增量写入 store。返回逐文档的处理报告。"""
+    """把 root 与 manifest 对账，增量写入 store。返回逐文档的处理报告。
+
+    dry_run=True 时只读文件系统与 manifest，不碰 store（可以传 store=None）。
+    """
     report = SyncReport(dry_run=dry_run)
     if not root.is_dir():
         report.blocked = f"root 不存在或不是目录: {root}"
         return report
+    if store is None and not dry_run:
+        raise ValueError("store 不能为空（只有 dry_run 可以不带）")
 
-    on_disk = scan_root(root)
-    vanished = sorted(set(manifest.docs) - set(on_disk))
+    on_disk = scan_root(root, errors=report.scan_errors)
+    # 目录读不全时，"文件没了" 可能只是看不见：宁可不对账，也绝不删错
+    vanished = [] if report.scan_errors else sorted(set(manifest.docs) - set(on_disk))
     if (
-        manifest.docs
+        not report.scan_errors
+        and manifest.docs
         and len(vanished) > len(manifest.docs) * MASS_DELETE_RATIO
         and not force
     ):
@@ -270,10 +335,31 @@ def sync_directory(
         )
         return report
 
+    if not dry_run and not manifest.docs:
+        # manifest 为空但集合非空：多半是旧索引（scripts.build_kb 的随机块 ID）。
+        # 没法逐块对账，继续同步只会叠加重复块，所以要求显式重建。
+        existing = store.client.count(store.collection_name, exact=True).count
+        if existing and not force:
+            report.blocked = (
+                f"集合里有 {existing} 个块，但没有 manifest（旧索引或 manifest 丢失）；"
+                "继续会叠加重复块。确认重建请加 --force（先清空该集合再全量入库）"
+            )
+            return report
+        if existing:
+            removed = _drop_all(store)
+            report.warnings.append(f"已清空 {removed} 个无 manifest 可对账的旧块，按源文件重建")
+
+    _upgrade_legacy_entries(manifest, report, dry_run)
+
     claimed = {d["meta"]["doc_id"]: src for src, d in manifest.docs.items() if src in on_disk}
     for source, path in on_disk.items():
-        digest = inputs_digest(root, path, file_sha256(path))
         old = manifest.docs.get(source)
+        try:
+            digest = inputs_digest(root, path, file_sha256(path))
+        except OSError as e:
+            # 单份读不了不影响其余文档；旧块与 manifest 原样保留，下次再试
+            report.errors[source] = f"读取失败: {e.strerror or e}"
+            continue
         if old and old["sha256"] == digest:
             report.unchanged.append(source)
             continue
@@ -286,6 +372,9 @@ def sync_directory(
             # 读不出或元数据非法：旧块原样保留（宁可旧，不可空/不可错放行），新文件不入库
             report.errors[source] = str(e)
             continue
+        if old and old["meta"]["doc_id"] != meta.doc_id:
+            # 换了 doc_id：旧 id 的占坑要释放，否则同批次里复用该 id 的文档会被误拒
+            claimed.pop(old["meta"]["doc_id"], None)
         claimed[meta.doc_id] = source
         (report.changed if old else report.added).append(source)
         if dry_run:
@@ -343,14 +432,14 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="增量同步一个目录到知识库")
     p.add_argument("--track", choices=["industry", "enterprise"], required=True)
     p.add_argument("--root", type=Path, help="源目录；缺省用该 track 的配置路径")
-    p.add_argument("--dry-run", action="store_true", help="只对账不写入")
-    p.add_argument("--force", action="store_true", help="放行大批量删除")
+    p.add_argument("--dry-run", action="store_true", help="只对账不写入（不加载模型、不碰向量库）")
+    p.add_argument("--force", action="store_true", help="放行大批量删除，或重建无 manifest 的旧索引")
     args = p.parse_args(argv)
 
     track: Track = args.track
     root = args.root or (s.industry_kb_path if track == "industry" else s.enterprise_kb_path)
     manifest = Manifest(s.qdrant_path / f"manifest-{track}.json")
-    store = get_store(track, get_embeddings())
+    store = None if args.dry_run else get_store(track, get_embeddings())
     report = sync_directory(root, track, store, manifest, dry_run=args.dry_run, force=args.force)
     print(report.summary())
     for src, err in report.errors.items():
