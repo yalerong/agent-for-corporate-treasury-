@@ -285,17 +285,14 @@ class TestSync:
         r2, _ = _sync(corpus, store, tmp_dir, force=True)
         assert not r2.blocked and _count(store) == n
 
-    def test_empty_collection_with_manifest_rebuilds(self, corpus, store, tmp_dir):
+    def test_empty_collection_with_manifest_is_blocked(self, corpus, store, tmp_dir):
         # 换向量库后端 / 数据卷丢了：manifest 还在但集合是空的，不能报"未变"
         _sync(corpus, store, tmp_dir)
         manifest = Manifest(tmp_dir / "m.json")
-        n = _count(store)
         store.delete(ids=[i for d in manifest.docs.values() for i in d["chunk_ids"]])
         assert _count(store) == 0
-        r, m = _sync(corpus, store, tmp_dir)
-        assert any("全量重建" in w for w in r.warnings)
-        assert not r.unchanged and _count(store) == n
-        assert all("meta" in d for d in m.docs.values())
+        r, _ = _sync(corpus, store, tmp_dir)
+        assert r.blocked and not r.unchanged and "集合是空的" in r.blocked
 
 
 def test_index_track_propagates_failure(monkeypatch, tmp_dir):
