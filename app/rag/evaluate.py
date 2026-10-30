@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import tempfile
 from collections import defaultdict
 from collections.abc import Callable
@@ -170,10 +171,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     with tempfile.TemporaryDirectory() as tmp:
         report = sync_directory(args.corpus, "enterprise", store, Manifest(Path(tmp) / "m.json"))
+    if report.blocked:
+        print(f"语料摄取被拒绝: {report.blocked}", file=sys.stderr)
+        return 2
     if report.errors:
-        print(report.errors)
+        print(report.errors, file=sys.stderr)
         return 2
     questions = load_questions(args.questions, holdout=args.holdout)
+    if not questions:
+        # 没有题就是没有跑：不能拿"0/0 全过"当绿灯
+        split = "holdout" if args.holdout else "dev"
+        print(f"{args.questions} 里没有 split={split} 的题目", file=sys.stderr)
+        return 2
     results = run_eval(
         store, questions, asof=date.fromisoformat(args.asof), k=args.k,
         answer_fn=build_answer_fn() if args.answer else None,

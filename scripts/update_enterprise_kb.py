@@ -16,6 +16,7 @@ import argparse
 import sys
 
 from app.config import get_settings
+from app.rag.ingest import IngestError
 from app.rag.store import index_track, load_directory
 
 
@@ -37,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {d.metadata.get('source')}")
         return 0
 
-    n = index_track("enterprise")
+    try:
+        n = index_track("enterprise")
+    except IngestError as e:
+        print(f"[update] 企业库重建失败: {e}", file=sys.stderr)
+        return 1
     print(f"[update] 企业库已重建，写入 {n} 个 chunk")
     return 0
 
