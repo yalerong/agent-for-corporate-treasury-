@@ -121,7 +121,19 @@ def run_eval(
     k: int = 4,
     answer_fn: Callable[[str, list[str]], str] | None = None,
 ) -> dict[str, list[Result]]:
-    """返回 {"retrieval": [...], "answer": [...]}（没传 answer_fn 则无 answer 层）。"""
+    """返回 {"retrieval": [...], "answer": [...]}（没传 answer_fn 则无 answer 层）。
+
+    可检索的块数不超过 k 时直接报错：检索会把所有可用块都返回，"来源在不在"恒为真，
+    排序坏了也测不出来——这种绿灯比没有评测更危险。
+    """
+    eligible = store.client.count(
+        store.collection_name, count_filter=active_filter(asof), exact=True
+    ).count
+    if eligible <= k:
+        raise ValueError(
+            f"{asof} 口径下只有 {eligible} 个可检索块，不超过 k={k}：每题都会返回全部块，"
+            "评测没有区分度。请增加干扰文档（语料更大）或调小 --k"
+        )
     out: dict[str, list[Result]] = {"retrieval": [], "answer": []}
     for q in questions:
         docs = store.similarity_search(q.question, k=k, filter=active_filter(asof))
