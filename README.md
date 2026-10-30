@@ -126,10 +126,12 @@ python -m app.rag.ingest --track enterprise --root <语料目录>
 
 #### 文档元数据：谁算数、谁能看（默认从严）
 
+`knowledge_base/` 是放你自己文档的地方，**仓库里它是空的、没有任何 `_meta.yaml`**——放进去的文档一律先是待审，不会因为目录而自动生效。自带的示例文档在 `examples/kb/`（那里的 `_meta.yaml` 已批准，仅供试用，别拷进你的目录）。
+
 不写任何元数据的文档会被入库，但**检索不到**（`status` 缺省 `draft`），且按最高密级（`restricted`）处理——必须有人明确批准、明确降级才生效。三种写法，后者覆盖前者：
 
 ```yaml
-# 1) 目录默认：knowledge_base/enterprise/policies/_meta.yaml（对该目录及子目录生效）
+# 1) 目录默认：<你的文档目录>/policies/_meta.yaml（对该目录及子目录生效）
 status: approved
 classification: internal      # public < internal < restricted
 owner: 财务部
@@ -161,7 +163,8 @@ python -m app.rag.evaluate --asof 2026-10-15 --answer     # 加回答层（需�
 ```bash
 docker compose up -d                                  # 问答 API，只监听本机 8000
 docker compose --profile local-llm up -d              # 另起本地模型（Ollama），数据不出机器
-docker compose run --rm app python -m app.rag.ingest --track enterprise     # 把 knowledge_base/enterprise/ 入库
+docker compose run --rm app python -m app.rag.ingest --track enterprise --root examples/kb/enterprise --source-prefix enterprise/   # 先用自带示例试一遍
+docker compose run --rm app python -m app.rag.ingest --track enterprise     # 入库你放在 knowledge_base/enterprise/ 的文档（默认待审，见上文元数据）
 docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要谁审批？"
 ```
 

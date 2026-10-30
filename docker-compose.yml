@@ -3,7 +3,9 @@
 #   然后拉一个模型：  docker compose exec ollama ollama pull qwen2.5:7b
 #   并在 .env 里设  LLM_BASE_URL=http://ollama:11434/v1  LLM_MODEL=qwen2.5:7b  LLM_API_KEY=ollama
 #
-# 放文档、入库（把 .md/.txt/.docx/.pdf/.xlsx 放进 ./knowledge_base/enterprise/ 下）：
+# 放文档、入库（把 .md/.txt/.docx/.pdf/.xlsx 放进 ./knowledge_base/enterprise/ 下；
+# 文档默认是待审状态，要在文档或目录的元数据里写 status: approved 才查得到，见 README）。
+# 先试用自带示例：  ... ingest --track enterprise --root examples/kb/enterprise --source-prefix enterprise/
 #   docker compose run --rm app python -m app.rag.ingest --track enterprise --dry-run
 #   docker compose run --rm app python -m app.rag.ingest --track enterprise
 # 提问：

@@ -5,7 +5,7 @@
     python -m app.rag.knowledge_base --industry-only
     python -m app.rag.knowledge_base --enterprise-only
 
-行业库低频更新，每次执行会读取 knowledge_base/industry/ 下全部 .md / .txt 重建索引；
+行业库低频更新，每次执行会读取 knowledge_base/industry/ 下的文档并增量同步进索引（仓库自带的示例文档在 examples/kb/）；
 企业库高频更新建议改用 scripts/update_enterprise_kb.py 做增量热更新（Phase 2 实现）。
 """
 from __future__ import annotations
