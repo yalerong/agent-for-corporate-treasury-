@@ -139,6 +139,7 @@ _PROJECT_ENV_PREFIXES = (
     "PAYMENT_",
     "AUDIT_",
     "API_",
+    "KB_",
 )
 
 

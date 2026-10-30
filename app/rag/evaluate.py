@@ -28,8 +28,8 @@ from datetime import date
 from pathlib import Path
 
 from app.rag.access import active_filter
+from app.rag.answer import REFUSAL_PHRASE, build_answer_fn, format_doc
 
-REFUSAL_PHRASE = "资料中没有"
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -139,7 +139,7 @@ def run_eval(
         docs = store.similarity_search(q.question, k=k, filter=active_filter(asof))
         out["retrieval"].append(score_retrieval(q, [d.metadata["source"] for d in docs]))
         if answer_fn is not None:
-            out["answer"].append(score_answer(q, answer_fn(q.question, [d.page_content for d in docs])))
+            out["answer"].append(score_answer(q, answer_fn(q.question, [format_doc(d, i) for i, d in enumerate(docs, 1)])))
     if answer_fn is None:
         del out["answer"]
     return out
@@ -156,22 +156,6 @@ def format_report(results: dict[str, list[Result]]) -> str:
             lines.append(f"  {cat}: {sum(r.passed for r in items)}/{len(items)}")
         lines += [f"  ✗ {r.id}: {'；'.join(r.reasons)}" for r in rs if not r.passed]
     return "\n".join(lines)
-
-
-def build_answer_fn() -> Callable[[str, list[str]], str]:
-    """回答层用的生成函数：提示词刻意写短、不分条、不放示例句（小模型会整句照抄）。"""
-    from app import llm as llm_module
-
-    def answer(question: str, contexts: list[str]) -> str:
-        ctx = "\n\n".join(f"[{i}] {c}" for i, c in enumerate(contexts, 1)) or "（无）"
-        prompt = (
-            f"只根据下面的资料回答问题。资料里没有答案就只回答“{REFUSAL_PHRASE}”。\n\n"
-            f"资料：\n{ctx}\n\n问题：{question}"
-        )
-        resp = llm_module.get_chat_model().invoke(prompt)
-        return resp.content if hasattr(resp, "content") else str(resp)
-
-    return answer
 
 
 def main(argv: list[str] | None = None) -> int:

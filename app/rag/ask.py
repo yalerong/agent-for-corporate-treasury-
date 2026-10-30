@@ -14,8 +14,8 @@ from datetime import date
 
 from app.config import get_settings
 from app.rag.access import active_filter
+from app.rag.answer import REFUSAL_MESSAGE, build_answer_fn, format_doc
 from app.rag.clock import today
-from app.rag.evaluate import REFUSAL_PHRASE, build_answer_fn
 
 
 def _citation(d) -> str:
@@ -34,10 +34,10 @@ def ask(question: str, tracks: list[str], k: int, asof: date, *, use_llm: bool) 
     for t in tracks:
         docs += get_store(t, emb).similarity_search(question, k=k, filter=active_filter(asof))
     if not docs:
-        return f"{REFUSAL_PHRASE}与此问题相关的、现行有效的内容。"
+        return REFUSAL_MESSAGE
     lines = []
     if use_llm:
-        lines.append(build_answer_fn()(question, [d.page_content for d in docs]))
+        lines.append(build_answer_fn()(question, [format_doc(d, i) for i, d in enumerate(docs, 1)]))
         lines.append("\n出处：")
     else:
         lines.append("（未配置 LLM，仅列出命中的原文）\n")

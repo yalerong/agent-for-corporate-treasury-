@@ -10,12 +10,10 @@
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-from langchain_core.documents import Document
 from langchain_core.tools import tool
 
 from app.rag.access import active_filter
+from app.rag.answer import format_docs
 from app.rag.store import get_embeddings, get_store
 from app.tools.audit import audit
 
@@ -35,15 +33,7 @@ def reset_stores() -> None:
     _stores.clear()
 
 
-def _format(docs: Iterable[Document]) -> str:
-    docs = list(docs)
-    if not docs:
-        return "(no results)"
-    parts = []
-    for i, d in enumerate(docs, 1):
-        source = d.metadata.get("source", "unknown")
-        parts.append(f"[{i}] [source: {source}]\n{d.page_content}")
-    return "\n\n".join(parts)
+_format = format_docs  # 引用格式与线上问答 / 评测共用，见 app/rag/answer.py
 
 
 @tool
