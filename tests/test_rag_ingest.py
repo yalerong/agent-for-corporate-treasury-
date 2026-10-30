@@ -285,6 +285,15 @@ class TestSync:
         r2, _ = _sync(corpus, store, tmp_dir, force=True)
         assert not r2.blocked and _count(store) == n
 
+    def test_empty_collection_with_manifest_is_blocked(self, corpus, store, tmp_dir):
+        # 换向量库后端 / 数据卷丢了：manifest 还在但集合是空的，不能报"未变"
+        _sync(corpus, store, tmp_dir)
+        manifest = Manifest(tmp_dir / "m.json")
+        store.delete(ids=[i for d in manifest.docs.values() for i in d["chunk_ids"]])
+        assert _count(store) == 0
+        r, _ = _sync(corpus, store, tmp_dir)
+        assert r.blocked and not r.unchanged and "集合是空的" in r.blocked
+
     def test_scan_error_keeps_id_reservations(self, corpus, store, tmp_dir, monkeypatch):
         _sync(corpus, store, tmp_dir)
         # 可读目录里放一份冒用不可读文档 doc_id 的新文档

@@ -1,0 +1,40 @@
+# 构建上下文不读 .gitignore：本机跑过 Lark 授权、接过真实数据之后，
+# 这些私有文件必须在这里显式排除，否则 `COPY . .` 会把它们打进镜像。
+.git
+.github
+.env
+.env.*
+!.env.example
+.venv
+venv
+*.egg-info
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+qdrant_data
+logs
+_site
+*.log
+
+# Lark OAuth 身份缓存（oauth_server.py / fetch_lark.py 写入，含 access token）
+cashflow/user_token.json
+
+# cashflow 真实数据、产物与本机规则/映射（.gitignore 已列，构建上下文要再排一次）
+cashflow/data
+cashflow/runs
+cashflow/patterns
+cashflow/column_map.yaml
+cashflow/related_parties.yaml
+cashflow/history_manifest.yaml
+cashflow/policy.yaml
+cashflow/advisor_rules.yaml
+cashflow/advisor_entity_map.yaml
+cashflow/entity_alias.yaml
+cashflow/advisor_paid*.yaml
+cashflow/advisor_transfers*.yaml
+cashflow/advice*/
+
+# 本地任务备忘（可能含真实业务信息）
+TASK_BRIEF.md
+PLAN-*.md

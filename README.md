@@ -156,6 +156,23 @@ python -m app.rag.evaluate --asof 2026-10-15 --answer     # 加回答层（需�
 
 题集 `eval/questions.jsonl` + 合成语料 `eval/corpus/`（虚构的「示例集团」；埋了草稿、已废止、被新裁决取代三类陷阱，以及资料里根本没有的问题）。打分全是确定性规则（来源在不在、该拒答有没有拒答、有没有说出旧结论），不用 LLM 评判。`--asof` 必填——取代/生效期依赖“今天”，不钉日期同一份题集结果会变。**封存集默认不跑**（`--holdout`），定稿前才跑一次，否则就成了训练集。换成你自己的制度时，复制这两处替换即可。
 
+### 一条命令部署 + 命令行问答（骨架）
+
+```bash
+docker compose up -d                                  # 问答 API，只监听本机 8000
+docker compose --profile local-llm up -d              # 另起本地模型（Ollama），数据不出机器
+docker compose run --rm app python -m app.rag.ingest --track enterprise     # 把 knowledge_base/enterprise/ 入库
+docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要谁审批？"
+```
+
+`ask` 只用「现在算数」的文档回答，每条结果带 doc_id、来源和生效期；一条都没命中就直接说资料中没有，不去问模型；没配置 LLM 时只列原文和出处。
+
+向量库跑成独立的 `qdrant` 服务（`QDRANT_URL=http://qdrant:6333`），所以 API 在跑的时候也能直接 `docker compose run --rm app ...` 入库或提问；
+本地文件模式会独占数据目录，那种配置下两个进程只能活一个。知识库源文件走 `./knowledge_base` 绑定挂载，放进去即可；
+审计日志写到 `/data/logs/audit.jsonl`（`app_data` 卷），重建容器不会丢。镜像构建上下文排除了 Lark token 缓存与 cashflow 真实数据/规则文件（见 `.dockerignore`）。
+
+**当前状态**：compose 文件已用 `docker compose config` 校验，镜像尚未在干净机器上完整构建和跑通（依赖 torch，首次构建体积大）；本地模型的拉取与模型选择需要你按实际硬件定。
+
 ## 多智能体协作 demo（一条命令，无需任何 Key）
 
 把 DESIGN.md 的多智能体设计跑成看得见的东西：三个角色节点串成一条链，**每一条"会动钱"的建议都必须过审批 Gate**。

@@ -41,8 +41,14 @@ def get_embeddings() -> Embeddings:
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:
-    """Qdrant 本地文件模式客户端单例。同一 path 在同一进程内不能开多个。"""
+    """Qdrant 客户端单例。
+
+    配了 QDRANT_URL 就连服务端（API 与 CLI 进程可以同时用同一个库）；
+    否则用本地文件模式——同一 path 在同一进程内不能开多个，跨进程更是互斥锁。
+    """
     s = get_settings()
+    if s.qdrant_url:
+        return QdrantClient(url=s.qdrant_url)
     path_str = str(s.qdrant_path)
     if path_str in (":memory:", "memory"):
         return QdrantClient(location=":memory:")

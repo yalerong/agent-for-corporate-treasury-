@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     embedding_device: Literal["cpu", "cuda"] = "cpu"
 
     qdrant_path: Path = Path("./qdrant_data")
+    # 非空则连 Qdrant 服务端（API 与 CLI 可同时用）；空则用本地文件模式（单进程独占目录）
+    qdrant_url: str = ""
     industry_collection: str = "treasury_industry"
     enterprise_collection: str = "treasury_enterprise"
 
