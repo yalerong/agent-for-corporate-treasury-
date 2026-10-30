@@ -299,3 +299,22 @@ class TestSync:
         assert "draft.md" in r.drafts
         assert any("ghost" in w for w in r.warnings)
         assert not m.docs and _count(store) == 0
+
+    def test_dry_run_drops_proposed_deletions_before_validation(self, corpus, store, tmp_dir):
+        # 已入库三份：old(approved, id=o1) / dr(草稿) / keep；之后 old、dr 被删，新增一份取代 o1
+        (corpus / "old.md").write_text("---\nstatus: approved\ndoc_id: o1\n---\n旧。", "utf-8")
+        (corpus / "dr.md").write_text("草稿，无元数据。", "utf-8")
+        (corpus / "keep.md").write_text("---\nstatus: approved\n---\n保留。", "utf-8")
+        _sync(corpus, store, tmp_dir)
+        (corpus / "old.md").unlink()
+        (corpus / "dr.md").unlink()
+        (corpus / "new.md").write_text(
+            "---\nstatus: approved\ndoc_id: n1\nsupersedes: [o1]\n---\n新。", "utf-8"
+        )
+        n = _count(store)
+        r, m = _sync(corpus, store, tmp_dir, dry_run=True)
+        assert sorted(r.deleted) == ["dr.md", "old.md"]
+        # o1 在同步后已不存在 → 与真实同步一样报“知识库里没有这份文档”
+        assert any("o1" in w for w in r.warnings)
+        assert "dr.md" not in r.drafts                      # 已删的草稿不再挂在待批准清单上
+        assert {"old.md", "dr.md"} <= set(m.docs) and _count(store) == n  # 调用方的 manifest 与库都没动
