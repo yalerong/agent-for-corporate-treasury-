@@ -522,6 +522,11 @@ def sync_directory(
         except (ParseError, MetaError) as e:
             # 读不出或元数据非法：旧块原样保留（宁可旧，不可空/不可错放行），新文件不入库
             report.errors[source] = str(e)
+            if old and old["meta"]["status"] == "approved":
+                report.errors[source] += (
+                    "（⚠ 这份文档的旧版本仍是已批准状态、仍在被检索；"
+                    "想废止它的话，这次的改动没有生效，请先修好上面的问题）"
+                )
             continue
         if old and old["meta"]["doc_id"] != meta.doc_id:
             # 换了 doc_id：旧 id 的占坑要释放，否则同批次里复用该 id 的文档会被误拒

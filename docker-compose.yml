@@ -1,4 +1,5 @@
 # 一条命令起问答服务：  docker compose up -d
+# 需要 Docker Compose 2.24 及以上（env_file 的 required: false 写法）；docker compose version 可查。
 # 想要完全本地的模型（数据不出机器）：  docker compose --profile local-llm up -d
 #   然后拉一个模型：  docker compose exec ollama ollama pull qwen2.5:7b
 #   并在 .env 里设  LLM_BASE_URL=http://ollama:11434/v1  LLM_MODEL=qwen2.5:7b  LLM_API_KEY=ollama
@@ -34,7 +35,7 @@ services:
     restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.19.2   # 与 requirements 里的 qdrant-client 1.19 同一小版本（客户端会检查兼容性）
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped

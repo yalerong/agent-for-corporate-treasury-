@@ -33,3 +33,14 @@ def test_dockerfile_only_copies_what_the_allowlist_provides(project_root):
     ]
     sources = {c[1] for c in copies}
     assert sources <= {"requirements.txt", "."}, sources
+
+
+def test_compose_images_are_pinned_not_latest(project_root):
+    """向量库服务端版本和 Python 客户端要对得上；浮动的 latest 会在某天悄悄升级后不兼容。"""
+    text = (project_root / "docker-compose.yml").read_text(encoding="utf-8")
+    images = [
+        ln.split("image:", 1)[1].split("#")[0].strip()
+        for ln in text.splitlines() if ln.strip().startswith("image:")
+    ]
+    qdrant = [i for i in images if i.startswith("qdrant/qdrant")]
+    assert qdrant and all(":" in i and not i.endswith(":latest") for i in qdrant), qdrant

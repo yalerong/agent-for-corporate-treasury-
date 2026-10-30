@@ -52,6 +52,7 @@ class Result:
     category: str
     passed: bool
     reasons: list[str]
+    skipped: bool = False  # 该层对这道题没有可断言的内容（不计入通过率）
 
 
 def load_questions(path: Path, *, holdout: bool = False) -> list[Question]:
@@ -137,7 +138,12 @@ def run_eval(
     out: dict[str, list[Result]] = {"retrieval": [], "answer": []}
     for q in questions:
         docs = store.similarity_search(q.question, k=k, filter=active_filter(asof))
-        out["retrieval"].append(score_retrieval(q, [d.metadata["source"] for d in docs]))
+        if q.must_refuse and not q.expect_sources and not q.forbid_sources:
+            # 纯“资料里没有”的题：检索层没有任何可断言的来源，不能记成通过——
+            # 检索层要等有相关度阈值之后才测得出“没命中”，现在如实标 n/a
+            out["retrieval"].append(Result(q.id, q.category, True, [], skipped=True))
+        else:
+            out["retrieval"].append(score_retrieval(q, [d.metadata["source"] for d in docs]))
         if answer_fn is not None:
             out["answer"].append(score_answer(q, answer_fn(q.question, [format_doc(d, i) for i, d in enumerate(docs, 1)])))
     if answer_fn is None:
@@ -150,11 +156,15 @@ def format_report(results: dict[str, list[Result]]) -> str:
     for layer, rs in results.items():
         by_cat: dict[str, list[Result]] = defaultdict(list)
         for r in rs:
-            by_cat[r.category].append(r)
-        lines.append(f"[{layer}] 通过 {sum(r.passed for r in rs)}/{len(rs)}")
+            if not r.skipped:
+                by_cat[r.category].append(r)
+        scored = [r for r in rs if not r.skipped]
+        n_skip = len(rs) - len(scored)
+        note = f"（另有 {n_skip} 题本层无可断言内容，n/a）" if n_skip else ""
+        lines.append(f"[{layer}] 通过 {sum(r.passed for r in scored)}/{len(scored)}{note}")
         for cat, items in sorted(by_cat.items()):
             lines.append(f"  {cat}: {sum(r.passed for r in items)}/{len(items)}")
-        lines += [f"  ✗ {r.id}: {'；'.join(r.reasons)}" for r in rs if not r.passed]
+        lines += [f"  ✗ {r.id}: {'；'.join(r.reasons)}" for r in scored if not r.passed]
     return "\n".join(lines)
 
 
