@@ -30,6 +30,7 @@ DEFAULT_OUTPUT = ROOT / "_site"
 # 加条目要同时想清楚它该不该被公网看见。
 FILES = (
     ("multi-agent.html", "index.html"),
+    ("method.html", "method.html"),
     ("robots.txt", "robots.txt"),
     ("404.html", "404.html"),
     ("_headers", "_headers"),
@@ -105,13 +106,21 @@ def main() -> int:
     if missing:
         raise SystemExit("缺文件：" + "、".join(f"docs/{name}" for name in missing))
 
-    check_page((DOCS / "multi-agent.html").read_text(encoding="utf-8"))
+    for src, _ in FILES:
+        if src.endswith(".html"):
+            check_page((DOCS / src).read_text(encoding="utf-8"))
 
     if out == DEFAULT_OUTPUT and out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
     for src, dst in FILES:
-        shutil.copy(DOCS / src, out / dst)
+        if src.endswith(".html"):
+            # 源文件里页面互链写源文件名（本地双击能用）；线上首页被改名成 index.html，
+            # 指向它的链接要跟着改成 ./，否则线上 404。
+            html = (DOCS / src).read_bytes()
+            (out / dst).write_bytes(html.replace(b'href="multi-agent.html"', b'href="./"'))
+        else:
+            shutil.copy(DOCS / src, out / dst)
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     print(f"输出目录: {out}")

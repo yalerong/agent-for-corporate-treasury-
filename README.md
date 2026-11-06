@@ -189,6 +189,7 @@ docker compose run --rm app python -m app.rag.ask "单笔调拨 60 万元需要�
 > （裁决逻辑与 `policy.review_tier` 对拍一致；无外部依赖，可直接托管到任意静态站点）。
 >
 > **在线版**：<https://treasury-demo.pages.dev/> —— 就是这张页面。
+> 侧栏「方法与负结果」→ [docs/method.html](docs/method.html)：端侧小模型 RAG 问答的评测记录（检索不是瓶颈、7B 也编、小模型复读提示词），只含题数比例。
 > **这个链接是公开的，没有任何访问控制**，拿到就能打开；页里数据全部合成，不含真实主体与流水。
 > `robots.txt` 与 `X-Robots-Tag` 只让它不进搜索引擎，那不是访问控制。
 
