@@ -50,7 +50,7 @@ def site(tmp_path_factory) -> Path:
 
 def test_deploy_bundle_has_exactly_the_files_it_should(site: Path):
     got = sorted(p.name for p in site.iterdir())
-    assert got == ["404.html", "_headers", "index.html", "robots.txt"]
+    assert got == ["404.html", "_headers", "index.html", "method.html", "robots.txt"]
 
 
 def test_index_comes_from_the_multi_agent_page(site: Path):
@@ -74,9 +74,10 @@ def test_security_headers_cover_every_path(site: Path):
     assert "frame-ancestors 'none'" in text
 
 
-def test_page_loads_nothing_the_csp_would_block(site: Path):
+@pytest.mark.parametrize("page", ("index.html", "method.html"))
+def test_page_loads_nothing_the_csp_would_block(site: Path, page: str):
     """CSP 是 `'self'` 单源且没给 `'unsafe-eval'`。"""
-    html = (site / "index.html").read_text(encoding="utf-8")
+    html = (site / page).read_text(encoding="utf-8")
     assert "https://cdn." not in html and "http://" not in html.replace("http://www.w3.org", "")
     assert "new Function(" not in html
     assert "eval(" not in html
@@ -137,6 +138,7 @@ def test_build_rebuilds_only_its_dedicated_default_output(tmp_path: Path, monkey
     docs.mkdir(parents=True)
     for name, content in (
         ("multi-agent.html", "<main>safe</main>"),
+        ("method.html", "<main>method</main>"),
         ("robots.txt", "User-agent: *\nAllow: /\n"),
         ("404.html", "not found"),
         ("_headers", "/*\n"),

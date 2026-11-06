@@ -30,6 +30,7 @@ DEFAULT_OUTPUT = ROOT / "_site"
 # 加条目要同时想清楚它该不该被公网看见。
 FILES = (
     ("multi-agent.html", "index.html"),
+    ("method.html", "method.html"),
     ("robots.txt", "robots.txt"),
     ("404.html", "404.html"),
     ("_headers", "_headers"),
@@ -105,7 +106,9 @@ def main() -> int:
     if missing:
         raise SystemExit("缺文件：" + "、".join(f"docs/{name}" for name in missing))
 
-    check_page((DOCS / "multi-agent.html").read_text(encoding="utf-8"))
+    for src, _ in FILES:
+        if src.endswith(".html"):
+            check_page((DOCS / src).read_text(encoding="utf-8"))
 
     if out == DEFAULT_OUTPUT and out.exists():
         shutil.rmtree(out)

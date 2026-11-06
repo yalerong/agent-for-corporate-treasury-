@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>方法与负结果 · 端侧小模型问答评测</title>
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="description" content="在真实资金裁决语料上评测本地 RAG 问答：瓶颈在生成不在检索，换更大的模型也压不住编造。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23B23A32'/%3E%3Crect x='9' y='9' width='14' height='14' rx='1.5' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E">
+<style>
+:root {
+  --paper: #EFECE3; --card: #FAF8F2; --ink: #2A271F; --ink-2: #6E6855; --ink-3: #98917E;
+  --rule: #E2DECF; --accent: #C15F3C; --accent-soft: #F4E9E0;
+  --seal-ink: #9A3A2C; --jade-ink: #2F6342; --grid: #E9E5D6;
+  --shadow: 0 1px 2px rgba(42,39,31,.06), 0 8px 24px -12px rgba(42,39,31,.18);
+  --cn: Inter, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1E1B16; --card: #2B2823; --ink: #E8E4D9; --ink-2: #B5AE9C; --ink-3: #8C8574;
+    --rule: #3A362E; --accent: #DC8159; --accent-soft: #3A2A21;
+    --seal-ink: #E08070; --jade-ink: #7FB894; --grid: rgba(255,255,255,.035);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--cn); font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 48px 48px; background-position: -1px -1px;
+}
+::selection { background: rgba(193,95,60,.20); }
+.wrap { max-width: 46rem; margin: 0 auto; padding: 2rem 1.15rem 4rem; }
+.back { font-family: var(--mono); font-size: .75rem; color: var(--ink-3); text-decoration: none; }
+.back:hover { color: var(--accent); }
+.eyebrow { font-family: var(--mono); font-size: .7rem; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 1.6rem 0 .7rem; }
+h1 { margin: 0; font-size: 1.65rem; line-height: 1.35; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+.lede { margin: .9rem 0 0; color: var(--ink-2); }
+.lede strong { color: var(--ink); }
+.page-sec { background: var(--card); border: 1px solid var(--rule); border-top: 3px solid var(--accent);
+  border-radius: 14px; padding: 2.1rem 2.3rem 2.3rem; box-shadow: var(--shadow); margin: 2.6rem 0; }
+.sec-no { display: flex; align-items: center; gap: .7rem; margin: 0 0 1rem; font-family: var(--mono);
+  font-size: .78rem; letter-spacing: .2em; color: var(--accent); font-weight: 600; }
+.sec-no span { color: var(--ink-3); letter-spacing: .14em; font-weight: 400; }
+.sec-no::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+h2 { font-size: 1.1rem; font-weight: 700; margin: .1rem 0 .8rem; }
+p, li { color: var(--ink-2); }
+p b, li b, td b { color: var(--ink); }
+ul { padding-left: 1.2rem; }
+.scroll-x { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .84rem; margin: .4rem 0 .2rem; }
+th, td { text-align: left; padding: .5rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--ink-3); font-weight: 600; font-size: .74rem; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.good { color: var(--jade-ink); font-weight: 600; }
+td.bad { color: var(--seal-ink); }
+code { font-family: var(--mono); font-size: .8em; color: var(--accent); }
+.note { font-size: .8rem; color: var(--ink-3); }
+.takeaway { margin: 1rem 0 0; padding: .7rem .9rem; border-left: 3px solid var(--accent);
+  background: var(--accent-soft); color: var(--ink); font-size: .9rem; }
+footer { margin-top: 2.4rem; font-size: .76rem; color: var(--ink-3); line-height: 1.7; }
+footer a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--rule); }
+@media (max-width: 640px) { .page-sec { padding: 1.4rem 1.1rem 1.5rem; border-radius: 10px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← 回到协作演示</a>
+
+  <header>
+    <p class="eyebrow">Method · Negative Results</p>
+    <h1>换个大模型也压不住编造，<br>所以拒答要靠流程兜底</h1>
+    <p class="lede">
+      在真实资金裁决语料上做本地 RAG 问答的评测记录。结论一句话：<strong>瓶颈不在检索，在生成；
+      7B 模型和 2B 一样会编。</strong>这也是本系统把“判定交给代码、动钱必须过人”写死的原因。
+    </p>
+  </header>
+
+  <section class="page-sec">
+    <p class="sec-no">00 <span>SETUP</span></p>
+    <h2>实验设置</h2>
+    <ul>
+      <li><b>场地</b>：独立的私有实验台，语料含真实数据不公开。本仓的 RAG 是另一套实现，下面的数是<b>设计依据</b>，不是本仓代码的测试成绩。</li>
+      <li><b>语料</b>：资金条线规则库 + 六周人工裁决书，切块后约 270 块。</li>
+      <li><b>栈</b>：MiniCPM5-2B Q4（生成）+ bge-m3（向量）+ BM25（规则号、账户名这类精确词）+ RRF 融合，单机 CPU。</li>
+      <li><b>评测集</b>：56 题，切成开发集 38 题（其中陷阱题 9）+ 留出集 18 题，<b>留出集封存未跑</b>。</li>
+      <li><b>两层指标分开算</b>：检索命中（对的块进没进 top5）、答案命中（关键词全中且不含禁词）。</li>
+      <li><b>陷阱题</b>：答案不在语料里，或语料只有相近但不同的事实。须以“资料中未提及”开头且不得报出题外数字；只有“检索到了诱导材料、仍然拒答”才算过。</li>
+    </ul>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">01 <span>BOTTLENECK</span></p>
+    <h2>检索不是瓶颈</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>开发集</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>检索命中（普通题）</td><td class="n good">27 / 29</td></tr>
+        <tr><td>答案命中（普通题）</td><td class="n bad">18 / 29</td></tr>
+        <tr><td>陷阱题 检索+拒答</td><td class="n bad">5 / 9</td></tr>
+      </tbody>
+    </table></div>
+    <p class="takeaway">检索对了、答案错了的占多数，所以先别动切块和向量模型。</p>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">02 <span>MODEL SIZE</span></p>
+    <h2>换 7B 也编</h2>
+    <p>早期 8 题小样本，同一索引，在 GPU 上跑三个模型。<b>样本小，只作方向参考。</b></p>
+    <div class="scroll-x"><table>
+      <thead><tr><th>模型</th><th>检索</th><th>答案</th><th>两道陷阱题</th></tr></thead>
+      <tbody>
+        <tr><td>MiniCPM5-2B</td><td class="n">8/8</td><td class="n">7/8</td><td class="bad">错 1</td></tr>
+        <tr><td>qwen2.5:7b</td><td class="n">8/8</td><td class="n">7/8</td><td class="bad">错 1</td></tr>
+        <tr><td>qwen3:8b</td><td class="n">8/8</td><td class="n">6/8</td><td class="bad">错 1</td></tr>
+      </tbody>
+    </table></div>
+    <p>三个模型各错一道陷阱题，错法相同：<b>抓最像的段落硬凑</b>。</p>
+    <p class="takeaway">问题出在流程，不在模型规模，所以不急着上 LoRA 微调。</p>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">03 <span>PROMPTING</span></p>
+    <h2>小模型复读提示词，而不是遵循</h2>
+    <p>开发集 38 题，对照四版系统提示词：</p>
+    <div class="scroll-x"><table>
+      <thead><tr><th>版本</th><th>普通题答案</th><th>陷阱题 检索+拒答</th><th>全部</th></tr></thead>
+      <tbody>
+        <tr><td><b>v1 现行</b>（短、不分条）</td><td class="n good">18/29</td><td class="n good">5/9</td><td class="n good">23/38</td></tr>
+        <tr><td>v2 回答模板 + 示例句</td><td class="n bad">12/29</td><td class="n bad">1/9</td><td class="n bad">13/38</td></tr>
+        <tr><td>v3 去掉示例</td><td class="n bad">12/29</td><td class="n bad">1/9</td><td class="n bad">13/38</td></tr>
+        <tr><td>v4 v1 + 两条补充</td><td class="n">17/29</td><td class="n">4/9</td><td class="n">21/38</td></tr>
+      </tbody>
+    </table></div>
+    <ul>
+      <li><b>v2</b>：把示例句原样复读成答案，资料里明明有答案也回“未提及”。</li>
+      <li><b>v3</b>：17/38 题直接输出了系统提示词里的规则块原文。</li>
+    </ul>
+    <p class="takeaway">给 2B 模型的提示词要短、不分条、不放示例。v2、v3 记为负结果，默认保持 v1。</p>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">04 <span>NOISE</span></p>
+    <h2>运行噪声比提示词差异还大</h2>
+    <p>温度 0.2、未固定种子时，同一提示词跑两次，31 道共同题里<b>判定翻转 5 道（16%）</b>。</p>
+    <ul>
+      <li>v1 与 v4 差 1–3 题，在噪声范围内，不构成结论。</li>
+      <li>v2、v3 差 10 题，且失败机制明确（复读），结论成立。</li>
+    </ul>
+    <p class="takeaway">以后比较提示词，先把温度设为 0 或固定种子。</p>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">05 <span>DESIGN</span></p>
+    <h2>落到本系统设计上的东西</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>实验结论</th><th>本仓对应</th></tr></thead>
+      <tbody>
+        <tr><td>模型会把候选、过期材料当依据</td><td>检索只返回“现在算数”的块：已批准、在生效期内、没被取代；缺元数据的一律查不到（<code>app/rag/access.py</code>）</td></tr>
+        <tr><td>只有陷阱题才测得出抗编造</td><td>评测区分有答案题和无答案题，无答案题的检索层单独标注（<code>app/rag/evaluate.py</code>）</td></tr>
+        <tr><td>开发集上调出来的数不算成绩</td><td>评测集分 dev / holdout，holdout 默认不跑，定稿前加 <code>--holdout</code> 只跑一次（<code>app/rag/evaluate.py</code>）</td></tr>
+        <tr><td>模型规模救不了编造</td><td>会动钱的建议一律过审批 Gate，Agent 停在“提议”，不执行</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="page-sec">
+    <p class="sec-no">06 <span>LIMITS</span></p>
+    <h2>没做的与局限</h2>
+    <ul>
+      <li>留出集 18 题尚未跑，以上全是开发阶段读数，不是验收成绩。</li>
+      <li>提示词对比时温度未固定（见 04），v1 和 v4 的差别不下结论。</li>
+      <li>7B 对照只有 8 题；在 38 题开发集上的大模型对照尚未跑。</li>
+      <li>没做 LoRA：按判据，只有“检索命中但答错”且大模型能答对时才值得做。</li>
+    </ul>
+  </section>
+
+  <footer>
+    数据来自私有实验台的评测记录，只公开题数和比例，不含任何真实主体、账户与金额。
+    <a href="/">回到协作演示</a>
+  </footer>
+</div>
+</body>
+</html>
