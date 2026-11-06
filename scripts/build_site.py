@@ -114,7 +114,13 @@ def main() -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     for src, dst in FILES:
-        shutil.copy(DOCS / src, out / dst)
+        if src.endswith(".html"):
+            # 源文件里页面互链写源文件名（本地双击能用）；线上首页被改名成 index.html，
+            # 指向它的链接要跟着改成 ./，否则线上 404。
+            html = (DOCS / src).read_bytes()
+            (out / dst).write_bytes(html.replace(b'href="multi-agent.html"', b'href="./"'))
+        else:
+            shutil.copy(DOCS / src, out / dst)
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     print(f"输出目录: {out}")

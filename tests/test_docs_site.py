@@ -173,3 +173,13 @@ def test_robots_allows_crawlers_to_receive_the_noindex_header(site: Path):
     robots = (site / "robots.txt").read_text(encoding="utf-8")
     assert "Allow: /" in robots
     assert "Disallow: /" not in robots
+
+
+def test_method_page_links_back_in_both_layouts(site: Path):
+    # 源文件指向 multi-agent.html（本地双击能回首页）；部署产物里首页改名成 index.html，
+    # 同一链接必须改写成 ./，否则线上点"回到协作演示"404。
+    src = (DOCS / "method.html").read_text(encoding="utf-8")
+    built = (site / "method.html").read_text(encoding="utf-8")
+    assert 'href="multi-agent.html"' in src
+    assert 'href="multi-agent.html"' not in built
+    assert 'href="./"' in built
